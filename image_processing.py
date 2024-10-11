@@ -59,9 +59,7 @@ def load_and_display_image(image_name):
         print(f"Unsupported file format: {extension}")
         return None
 
-import numpy as np
-import cv2
-import matplotlib.pyplot as plt
+
 
 def select_corners_jpg(image, calculate_rgb=True):
     """
@@ -165,44 +163,44 @@ def select_corners_jpg(image, calculate_rgb=True):
 
 
 
-def select_corners_tif(image_path, tif_data, temp_jpg_path):
+def select_corners_tif(image_path, tif_data, temp_png_path):
     """
-    Crea un archivo .jpg temporal para permitir la selección de esquinas en imágenes .tif
+    Crea un archivo .png temporal para permitir la selección de esquinas en imágenes .tif
     y luego aplica las mismas transformaciones a la imagen radiométrica original adaptada a 640x480 píxeles.
     Muestra tanto la imagen visual alineada como el heatmap de los datos radiométricos.
 
     Args:
         image_path (str): Ruta del archivo .tif original.
         tif_data (np.array): Datos radiométricos del archivo .tif.
-        temp_jpg_path (str): Ruta del archivo .jpg temporal.
+        temp_png_path (str): Ruta del archivo .png temporal.
 
     Returns:
         aligned_visual_tif (np.array): Imagen visualmente alineada del .tif.
         aligned_radiometric_data (np.array): Datos radiométricos alineados.
     """
     try:
-        # Abrir la imagen .tif usando PIL para generar el .jpg
+        # Abrir la imagen .tif usando PIL para generar el .png
         tif_image = Image.open(image_path)
 
         # Verificar el modo de la imagen y convertirla si es necesario
         if tif_image.mode == 'F':
-            print("Convirtiendo la imagen de modo 'F' a 'L' (escala de grises) para generar .jpg")
-            tif_image = tif_image.convert('L')  # Convertir a escala de grises (solo para visualización .jpg)
+            print("Convirtiendo la imagen de modo 'F' a 'L' (escala de grises) para generar .png")
+            tif_image = tif_image.convert('L')  # Convertir a escala de grises (solo para visualización .png)
         elif tif_image.mode != 'RGB':
             tif_image = tif_image.convert('RGB')  # Convertir a RGB si es necesario
 
-        # Guardar la imagen convertida como un archivo .jpg temporal (solo para selección de esquinas)
-        tif_image.save(temp_jpg_path)
+        # Guardar la imagen convertida como un archivo .png temporal (sin pérdida de calidad)
+        tif_image.save(temp_png_path, format='PNG')  # PNG preserves quality better than JPEG
 
-        # Cargar la imagen .jpg temporal para la selección de esquinas (no se usará para procesamiento RGB)
-        jpg_image = cv2.imread(temp_jpg_path)
+        # Cargar la imagen .png temporal para la selección de esquinas (no se usará para procesamiento RGB)
+        png_image = cv2.imread(temp_png_path)
 
         # Verifica que la imagen temporal se haya cargado correctamente
-        if jpg_image is None:
-            raise ValueError("Error al cargar la imagen temporal .jpg.")
+        if png_image is None:
+            raise ValueError("Error al cargar la imagen temporal .png.")
 
-        # Usar la función de selección de esquinas en la imagen .jpg (sin calcular matriz RGB)
-        aligned_visual_tif, _, corners = select_corners_jpg(jpg_image, calculate_rgb=False)
+        # Usar la función de selección de esquinas en la imagen mejorada (sin calcular matriz RGB)
+        aligned_visual_tif, _, corners = select_corners_jpg(png_image, calculate_rgb=False)
 
         # Verifica que se hayan seleccionado las esquinas correctamente
         if corners is None or len(corners) != 4:
@@ -220,13 +218,6 @@ def select_corners_tif(image_path, tif_data, temp_jpg_path):
 
         # Aplicar la transformación a los datos radiométricos .tif (manteniendo los datos radiométricos)
         aligned_radiometric_data = cv2.warpPerspective(tif_data, matrix, (width, height))
-
-        # # Mostrar la imagen visualmente alineada
-        # plt.figure(figsize=(8, 6))
-        # plt.imshow(cv2.cvtColor(aligned_visual_tif, cv2.COLOR_BGR2RGB))
-        # plt.title("Imagen .tif visualmente alineada")
-        # plt.axis('off')
-        # plt.show()
 
         return aligned_visual_tif, aligned_radiometric_data
 

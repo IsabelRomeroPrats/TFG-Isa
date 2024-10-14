@@ -5,96 +5,119 @@ import matplotlib.pyplot as plt
 
 m,n= 20,15
 
-# Calibration for .jpg thermography
+# calibration_processing.py
+
+# calibration_processing.py
+
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+
+# Calibration for .jpg images (improved step: heatmap with two reference temperature points and emissivity)
 def calibrate_jpg_temperature(image_rgb, temperature_matrix_jpg, emissivity_matrix, m, n):
     """
-    Calibrate the temperature matrix using the RGB data and a known reference temperature point (for .jpg images).
-
+    Generate a heatmap from the RGB data of the image using two reference temperature points and emissivity adjustments.
+    
     Args:
-        image_rgb (np.array): The RGB image to calibrate.
-        temperature_matrix_jpg (np.array): The RGB matrix of the image (20x15 grid).
+        image_rgb (np.array): The RGB image of the PCB.
+        temperature_matrix_jpg (np.array): The RGB average temperature matrix (not used here).
         emissivity_matrix (np.array): The emissivity matrix.
-        m (int): Number of rows in the grid (height).
-        n (int): Number of columns in the grid (width).
+        m (int): Number of rows for the grid.
+        n (int): Number of columns for the grid.
 
     Returns:
-        np.array: Calibrated temperature matrix.
+        np.array: Temperature matrix (heatmap) with linear scaling based on two reference temperatures and emissivity.
     """
-    # Step 1: Allow the user to select a known temperature point
-    image_rgb_copy = np.copy(image_rgb)
-    temperature_point = []
+    # Step 1: Get the height and width of the image
+    height, width, _ = image_rgb.shape
 
-    def select_temperature_point(event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            temperature_point.append((x, y))
-            cv2.circle(image_rgb_copy, (x, y), 5, (0, 255, 0), -1)
-            cv2.imshow('Select Temperature Point', image_rgb_copy)
+    # Step 2: Calculate the size of each cell in the grid
+    cell_height = height // m
+    cell_width = width // n
 
-    # Show image and select the known temperature point
-    cv2.imshow('Select Temperature Point', image_rgb_copy)
-    cv2.setMouseCallback('Select Temperature Point', select_temperature_point)
+    # Step 3: Create a matrix to store the average brightness (grayscale) values for each cell
+    temperature_matrix = np.zeros((m, n), dtype=np.float32)
+
+    # Step 4: Loop through the grid and calculate the average brightness for each cell
+    for i in range(m):
+        for j in range(n):
+            y_start = i * cell_height
+            y_end = (i + 1) * cell_height
+            x_start = j * cell_width
+            x_end = (j + 1) * cell_width
+
+            # Get the region of interest (ROI) for the current cell
+            cell = image_rgb[y_start:y_end, x_start:x_end]
+
+            # Convert the cell to grayscale (average of RGB channels)
+            avg_brightness = np.mean(cv2.cvtColor(cell, cv2.COLOR_RGB2GRAY))
+
+            # Adjust the brightness by the emissivity value for this cell
+            emissivity = emissivity_matrix[i, j]
+            if emissivity > 0:  # Avoid division by zero
+                avg_brightness /= emissivity
+            else:
+                avg_brightness = 0  # Handle cases where emissivity is zero or very low
+
+            # Store the emissivity-corrected brightness in the temperature matrix
+            temperature_matrix[i, j] = avg_brightness
+
+    # Step 5: Input two reference temperature points and their known temperatures
+    reference_points = []
+    print("Click on two points on the PCB where you know the temperature.")
     
-    # Wait until a point is selected
-    print("Click on a point where you know the temperature.")
-    while len(temperature_point) == 0:
+    def select_reference_points(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN and len(reference_points) < 2:
+            reference_points.append((x, y))
+            cv2.circle(image_rgb, (x, y), 5, (0, 255, 0), -1)  # Mark the points
+            cv2.imshow('Select Two Temperature Points', image_rgb)
+
+    cv2.imshow('Select Two Temperature Points', image_rgb)
+    cv2.setMouseCallback('Select Two Temperature Points', select_reference_points)
+    
+    # Wait until two points are selected
+    while len(reference_points) < 2:
         cv2.waitKey(1)
 
     cv2.destroyAllWindows()
 
-    # Step 2: Get the known temperature from the user
-    known_temperature_kelvin = float(input(f"Enter the known temperature (in Kelvin) for the point {temperature_point}: "))
-    print(f"The known temperature is: {known_temperature_kelvin} K at {temperature_point}.")
+    # Step 6: Get the known temperatures for the two points
+    temp1 = float(input(f"Enter the temperature (in °C) for the first point {reference_points[0]}: "))
+    temp2 = float(input(f"Enter the temperature (in °C) for the second point {reference_points[1]}: "))
 
-    # Step 3: Map the selected point to the grid
-    x_full, y_full = temperature_point[0]  # Full image coordinates
-    height, width, _ = image_rgb.shape  # Dimensions of the full image
+    # Step 7: Get the grayscale brightness values at the reference points
+    x1, y1 = reference_points[0]
+    x2, y2 = reference_points[1]
+    brightness1 = temperature_matrix[y1 // cell_height, x1 // cell_width]
+    brightness2 = temperature_matrix[y2 // cell_height, x2 // cell_width]
 
-    # Calculate the cell height and width
-    cell_height = height / m
-    cell_width = width / n
+    # Step 8: Create a linear mapping function
+    def brightness_to_temperature(brightness, brightness1, brightness2, temp1, temp2):
+        # Linearly map the brightness values to temperatures
+        return temp1 + (brightness - brightness1) * (temp2 - temp1) / (brightness2 - brightness1)
 
-    # Map the full image coordinates to the grid indices in the 20x15 matrix
-    x_grid = int(x_full // cell_width)
-    y_grid = int(y_full // cell_height)
-
-    # Ensure the grid coordinates are within bounds
-    x_grid = min(x_grid, n - 1)
-    y_grid = min(y_grid, m - 1)
-
-    # Extract the reference RGB value at the selected point
-    reference_rgb_value = temperature_matrix_jpg[y_grid, x_grid].astype(np.float32)
-    print(f"Reference RGB Value at ({x_grid}, {y_grid}): {reference_rgb_value}")
-
-    # Step 4: Define the calibration function
-    def rgb_to_temperature_calibration(rgb_value, ref_rgb_value, ref_temperature, emissivity):
-        epsilon = 1e-6
-        r_ratio = rgb_value[0] / (ref_rgb_value[0] + epsilon)
-        g_ratio = rgb_value[1] / (ref_rgb_value[1] + epsilon)
-        b_ratio = rgb_value[2] / (ref_rgb_value[2] + epsilon)
-        ratios = [r_ratio, g_ratio, b_ratio]
-        average_ratio = np.mean([r for r in ratios if r < 10])
-        temperature = average_ratio * ref_temperature
-        temperature_adjusted = temperature / (emissivity + epsilon)
-        return temperature_adjusted
-
-    # Step 5: Create a matrix to store the temperature values
-    temperature_values = np.zeros((m, n), dtype=np.float32)
-
-    # Step 6: Loop over the grid and apply the calibration function
+    # Step 9: Apply the mapping to the entire temperature matrix
     for i in range(m):
         for j in range(n):
-            rgb_value = temperature_matrix_jpg[i, j].astype(np.float32)
-            emissivity = emissivity_matrix[i, j]
-            temperature = rgb_to_temperature_calibration(rgb_value, reference_rgb_value, known_temperature_kelvin, emissivity)
-            temperature_values[i, j] = temperature
+            temperature_matrix[i, j] = brightness_to_temperature(temperature_matrix[i, j], brightness1, brightness2, temp1, temp2)
 
-     # Step 7: Print a sample of the calibrated temperature matrix (first 5x5 elements)
-    print("Sample of calibrated temperature matrix (first 5x5):")
-    print(temperature_values[:5, :5])  # Prints the top-left 5x5 part of the matrix
+    # Step 10: Print a sample of the temperature matrix for debugging
+    print("Sample of the calibrated temperature matrix (first 5x5):")
+    print(temperature_matrix[:5, :5])
 
-    # Step 8: Return the calibrated temperature matrix
-    return temperature_values
+    return temperature_matrix
 
+# Visualization function for the temperature matrix (heatmap)
+def visualize_temperature_matrix(temperature_matrix):
+    plt.imshow(temperature_matrix, cmap='hot', interpolation='nearest')
+    plt.colorbar(label='Temperature (°C)')
+    plt.title('Calibrated Heatmap with Emissivity Correction')
+    plt.show()
+
+
+
+
+# calibration_processing.py
 
 # Calibration for .tif thermography
 def calibrate_tif_temperature(radiometric_data, emissivity_matrix, m, n):
@@ -104,27 +127,34 @@ def calibrate_tif_temperature(radiometric_data, emissivity_matrix, m, n):
     Args:
         radiometric_data (np.array): The radiometric temperature data from the .tif image.
         emissivity_matrix (np.array): The emissivity matrix.
-        m (int): Number of rows in the matrix (height).
-        n (int): Number of columns in the matrix (width).
+        m (int): Number of rows in the emissivity matrix.
+        n (int): Number of columns in the emissivity matrix.
 
     Returns:
         np.array: Calibrated temperature matrix.
     """
-    # Step 1: Adjust the radiometric data by the emissivity matrix
-    temperature_values = np.zeros((m, n), dtype=np.float32)
-    
-    # Step 2: Loop through the grid to apply emissivity correction
-    for i in range(m):
-        for j in range(n):
+    # Verificar dimensiones
+    print("Dimensiones de los datos radiométricos:", radiometric_data.shape)
+    print("Dimensiones de la matriz de emisividad:", emissivity_matrix.shape)
+
+    # Redimensionar la matriz de emisividad a las dimensiones de los datos radiométricos
+    height, width = radiometric_data.shape
+    emissivity_resized = cv2.resize(emissivity_matrix, (width, height), interpolation=cv2.INTER_LINEAR)
+
+    # Inicializar la matriz de temperaturas calibradas
+    temperature_values = np.zeros_like(radiometric_data, dtype=np.float32)
+
+    # Aplicar corrección de emisividad
+    for i in range(height):
+        for j in range(width):
             radiometric_value = radiometric_data[i, j]
-            emissivity = emissivity_matrix[i, j]
-            temperature_values[i, j] = radiometric_value / emissivity  # Adjust using emissivity
+            emissivity = max(emissivity_resized[i, j], 0.1)  # Evitar divisiones por valores muy pequeños de emisividad
+            temperature_values[i, j] = radiometric_value / emissivity  # Ajustar por emisividad
 
-    # Step 3: Print a sample of the calibrated temperature matrix (first 5x5 elements)
-    print("Sample of calibrated temperature matrix (first 5x5):")
-    print(temperature_values[:5, :5])  # Prints the top-left 5x5 part of the matrix
+    # Imprimir un ejemplo de la matriz de temperatura calibrada
+    print("Matriz de temperatura calibrada (primeros 5x5 valores):")
+    print(temperature_values[:5, :5])
 
-    # Step 4: Return the calibrated temperature matrix
     return temperature_values
 
 # Main function to handle calibration based on image type
@@ -144,7 +174,7 @@ def calibrate_temperature(image_type, image_data, temperature_matrix, emissivity
         np.array: Calibrated temperature matrix.
     """
     if image_type == 'jpg':
-        # Call the JPG calibration method
+        # Call the JPG calibration method (ya implementado)
         return calibrate_jpg_temperature(image_data, temperature_matrix, emissivity_matrix, m, n)
     elif image_type == 'tif':
         # Call the TIF calibration method
@@ -155,6 +185,6 @@ def calibrate_temperature(image_type, image_data, temperature_matrix, emissivity
 # Function to visualize the heatmap of the temperature matrix
 def visualize_temperature_matrix(temperature_matrix):
     plt.imshow(temperature_matrix, cmap='hot', interpolation='nearest')
-    plt.colorbar(label='Temperature (K)')
+    plt.colorbar(label='Temperature (°C)')  # Actualizado a °C
     plt.title('Calibrated Temperature Heatmap')
     plt.show()

@@ -71,8 +71,7 @@ def define_shape(image_rgb):
             if len(polygon_coordinates) == corners:
                 shapes.append(('polygon', polygon_coordinates))
                 cv2.destroyAllWindows()  # Close the pop-up window after selection
-                polygon_name = input(f"Enter the name for this polygon (e.g., material name): ")
-                polygon_emissivity = float(input(f"Enter the emissivity value for {polygon_name}: "))
+                polygon_emissivity = float(input(f"Enter the emissivity value for this polygon: "))
                 shape_emissivities.append(polygon_emissivity)
 
         elif shape_type == '9':  # For circles
@@ -101,8 +100,6 @@ def define_shape(image_rgb):
                 circle_name = input(f"Enter the name for this circle (e.g., material name): ")
                 circle_emissivity = float(input(f"Enter the emissivity value for {circle_name}: "))
                 shape_emissivities.append(circle_emissivity)
-        else:
-            print("Invalid input. Please enter a number between 3-6 for polygons or 9 for a circle.")
 
 def update_emissivity_matrix(emissivity_matrix, shapes, m, n, height, width, base_emissivity):
     """Updates the emissivity matrix based on defined shapes (polygons and circles)."""

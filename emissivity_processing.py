@@ -210,7 +210,7 @@ def print_shape_info():
         print(f"{shape_name}: Emissivity = {emissivity}")
 
 # Main function to process emissivity based on the image and shapes
-def process_emissivity(image_rgb, base_emissivity, m=20, n=15):
+def process_emissivity(image_rgb, base_emissivity, m=15, n=20):
     """
     Processes the emissivity matrix based on the image and user-defined shapes.
     

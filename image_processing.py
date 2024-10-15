@@ -121,7 +121,7 @@ def select_corners_jpg(image, calculate_rgb=True):
         return aligned_image_jpg, None, corners
 
     # Define grid dimensions
-    m, n = 20, 15  # m: rows, n: columns
+    m, n = 15, 25  # m: rows, n: columns
 
     # Calculate the size of each grid cell
     cell_height = height / m

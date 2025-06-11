@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import cv2
 from scipy.constants import sigma  # Boltzmann constant (sigma)
 
+
 # Define the resolution for both continuous and discrete heatmaps
 continuous_shape = (500, 500)  # Continuous 480x640 heatmap
 m, n = 20, 20  # Discrete heatmap 15x20

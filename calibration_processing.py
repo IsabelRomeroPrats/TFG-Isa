@@ -7,7 +7,7 @@ def calibrate_jpg_temperature(image_rgb, temperature_matrix_jpg, emissivity_matr
     """
     Generate a full-resolution heatmap from the RGB data of the image using two reference temperature points 
     and emissivity adjustments. This will return a matrix matching the original image dimensions.
-    
+
     Args:
         image_rgb (np.array): The RGB image of the PCB.
         temperature_matrix_jpg (np.array): The RGB average temperature matrix (not used here).
@@ -54,8 +54,8 @@ def calibrate_jpg_temperature(image_rgb, temperature_matrix_jpg, emissivity_matr
     cv2.destroyAllWindows()
 
     # Input the known temperatures for the reference points
-    temp1 = float(input(f"Enter the temperature (in °C) for the first point {reference_points[0]}: "))
-    temp2 = float(input(f"Enter the temperature (in °C) for the second point {reference_points[1]}: "))
+    temp1 = float(input(f"Enter the temperature (in °C) for the first point {reference_points[0]}: ")) + 273.15
+    temp2 = float(input(f"Enter the temperature (in °C) for the second point {reference_points[1]}: ")) + 273.15
 
     # Get the brightness values at the reference points
     x1, y1 = reference_points[0]
@@ -80,7 +80,7 @@ def visualize_temperature_matrix_jpg(temperature_matrix):
     """
     Displays the calibrated full-resolution temperature matrix (480x640) as a heatmap, then discretizes it 
     to a 15x20 matrix and displays the discretized matrix as a separate heatmap.
-    
+
     Args:
         temperature_matrix (np.array): The calibrated temperature matrix (480x640).
     """
@@ -90,7 +90,7 @@ def visualize_temperature_matrix_jpg(temperature_matrix):
     # Plot the full-resolution heatmap (480x640)
     plt.figure(figsize=(8, 6))
     plt.imshow(full_resolution_matrix, cmap='hot', interpolation='nearest')
-    plt.colorbar(label='Temperature (°C)')
+    plt.colorbar(label='Temperature (K)')
     plt.title('Full-Resolution Temperature Heatmap (480x640)')
     plt.show()
 
@@ -129,7 +129,7 @@ def visualize_temperature_matrix_jpg(temperature_matrix):
     # Plot the heatmap for the discretized matrix (15x20)
     plt.figure(figsize=(8, 6))
     plt.imshow(discretized_matrix, cmap='hot', interpolation='nearest')
-    plt.colorbar(label='Temperature (°C)')
+    plt.colorbar(label='Temperature (K)')
     plt.title('Discretized Temperature Heatmap (15x20)')
     plt.show()
 
@@ -143,15 +143,16 @@ def visualize_temperature_matrix_jpg(temperature_matrix):
 
 
 # Calibration for .tif thermographic images
-def calibrate_tif_temperature(image_rgb, emissivity_matrix, m, n):
+def calibrate_tif_temperature(image_rgb, emissivity_matrix, m, n, is_kelvin=True):
     """
     Calibrate the temperature matrix using the radiometric data and emissivity matrix (for .tif images).
 
     Args:
-        radiometric_data (np.array): The radiometric temperature data from the .tif image.
+        image_rgb (np.array): The radiometric temperature data from the .tif image.
         emissivity_matrix (np.array): The emissivity matrix.
         m (int): Number of rows in the emissivity matrix.
         n (int): Number of columns in the emissivity matrix.
+        is_kelvin (bool): Whether the input data is already in Kelvin.
 
     Returns:
         np.array: Calibrated temperature matrix.
@@ -171,6 +172,11 @@ def calibrate_tif_temperature(image_rgb, emissivity_matrix, m, n):
     for i in range(height):
         for j in range(width):
             radiometric_value = image_rgb[i, j]
+
+            # Convert to Kelvin only if the input is not already in Kelvin
+            if not is_kelvin:
+                radiometric_value += 273.15
+
             emissivity = max(emissivity_resized[i, j], 0.1)  # Avoid division by very low emissivity values
             temperature_values[i, j] = radiometric_value / emissivity  # Adjust by emissivity
 
@@ -184,7 +190,7 @@ def calibrate_tif_temperature(image_rgb, emissivity_matrix, m, n):
 def visualize_temperature_matrix_tif(temperature_matrix):
     """
     Displays both the full-resolution and discretized heatmaps for .tif images.
-    
+
     Args:
         temperature_matrix (np.array): The calibrated temperature matrix (480x640).
     """
@@ -196,7 +202,7 @@ def visualize_temperature_matrix_tif(temperature_matrix):
     # Plot the original full-resolution heatmap (480x640)
     plt.figure(figsize=(8, 6))
     plt.imshow(temperature_matrix, cmap='hot', interpolation='nearest')
-    plt.colorbar(label='Temperature (°C)')
+    plt.colorbar(label='Temperature (K)')
     plt.title('Full-Resolution Temperature Heatmap (480x640) for .tif')
     plt.show()
 
@@ -235,7 +241,7 @@ def visualize_temperature_matrix_tif(temperature_matrix):
     # Plot the heatmap for the discretized matrix (15x20)
     plt.figure(figsize=(8, 6))
     plt.imshow(discretized_matrix, cmap='hot', interpolation='nearest')
-    plt.colorbar(label='Temperature (°C)')
+    plt.colorbar(label='Temperature (K)')
     plt.title('Discretized Temperature Heatmap (15x20) for .tif')
     plt.show()
 
@@ -249,7 +255,7 @@ def visualize_temperature_matrix_tif(temperature_matrix):
 
 
 # Main function to calibrate temperature based on image type
-def calibrate_temperature(image_type, image_data, temperature_matrix, emissivity_matrix, m, n):
+def calibrate_temperature(image_type, image_data, temperature_matrix, emissivity_matrix, m, n, is_kelvin=True):
     """
     Calibrate the temperature matrix based on whether the image is .jpg or .tif.
 
@@ -260,6 +266,7 @@ def calibrate_temperature(image_type, image_data, temperature_matrix, emissivity
         emissivity_matrix (np.array): The emissivity matrix.
         m (int): Number of rows in the grid.
         n (int): Number of columns in the grid.
+        is_kelvin (bool): Whether the input data is already in Kelvin.
 
     Returns:
         np.array: Calibrated temperature matrix.
@@ -268,7 +275,7 @@ def calibrate_temperature(image_type, image_data, temperature_matrix, emissivity
         # Call the JPG calibration method
         return calibrate_jpg_temperature(image_data, temperature_matrix, emissivity_matrix)
     elif image_type == 'tif':
-        # Call the TIF calibration method
-        return calibrate_tif_temperature(image_data, emissivity_matrix, m, n)
+        # Call the TIF calibration method with the Kelvin flag
+        return calibrate_tif_temperature(image_data, emissivity_matrix, m, n, is_kelvin)
     else:
         raise ValueError("Unsupported image type. Only 'jpg' and 'tif' are supported.")

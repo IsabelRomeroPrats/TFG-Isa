@@ -161,6 +161,10 @@ def select_corners_jpg(image, calculate_rgb=True):
     return aligned_image_jpg, temperature_matrix_jpg, corners
 
 
+import numpy as np
+import cv2
+from PIL import Image
+
 def select_corners_tif(image_path, tif_data, temp_png_path):
     """
     Creates a temporary .png file to allow corner selection for .tif images,
@@ -177,23 +181,29 @@ def select_corners_tif(image_path, tif_data, temp_png_path):
         aligned_radiometric_data (np.array): Aligned radiometric data.
     """
     try:
-        # Open the .tif image using PIL to generate the .png
-        tif_image = Image.open(image_path)
+        # Step 1: Normalize the data to the 0-255 range for visualization
+        tif_data = tif_data + 273.15  # Convert from Celsius to Kelvin
+        min_val = np.min(tif_data)
+        max_val = np.max(tif_data)
+        
+        if min_val != max_val:
+            normalized_data = np.interp(tif_data, (min_val, max_val), (0, 255))
+        else:
+            # Edge case: if all values are identical, create a uniform black image
+            normalized_data = np.zeros_like(tif_data)
 
-        # Convert image mode if needed
-        if tif_image.mode == 'F':
-            print("Converting 'F' mode image to 'L' (grayscale) for .png generation")
-            tif_image = tif_image.convert('L')  # Convert to grayscale for visual .png
-        elif tif_image.mode != 'RGB':
-            tif_image = tif_image.convert('RGB')  # Convert to RGB if needed
+        # Step 2: Enhance contrast using histogram equalization
+        uint8_data = normalized_data.astype(np.uint8)
+        enhanced_data = cv2.equalizeHist(uint8_data)
 
-        # Save the converted image as a temporary .png (preserving quality)
-        tif_image.save(temp_png_path, format='PNG')  # PNG preserves quality better than JPEG
+        # Convert to 8-bit and save as temporary PNG for corner selection
+        temp_image = Image.fromarray(enhanced_data)
+        temp_image.save(temp_png_path, format='PNG')
+        print("Temporary PNG created for corner selection with enhanced contrast.")
 
-        # Load the temporary .png image for corner selection
+        # Step 3: Load the temporary PNG for corner selection
         png_image = cv2.imread(temp_png_path)
 
-        # Ensure the temporary image loaded correctly
         if png_image is None:
             raise ValueError("Error loading the temporary .png image.")
 
@@ -204,17 +214,15 @@ def select_corners_tif(image_path, tif_data, temp_png_path):
         if corners is None or len(corners) != 4:
             raise ValueError("Corner selection error. Make sure to select all 4 corners.")
 
-        # Apply the same transformations to the radiometric .tif data
+        # Step 4: Apply the same transformations to the radiometric .tif data
         width, height = 640, 480
-
-        # Define target corners to align the image to a 640x480 space
         target_corners = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype='float32')
         corners = np.array(corners, dtype='float32')
-
-        # Create the transformation matrix based on the selected corners
+        
+        # Transformation matrix for alignment
         matrix = cv2.getPerspectiveTransform(corners, target_corners)
 
-        # Apply the transformation to the radiometric .tif data
+        # Apply transformation to the radiometric data
         aligned_radiometric_data = cv2.warpPerspective(tif_data, matrix, (width, height))
 
         return aligned_visual_tif, aligned_radiometric_data

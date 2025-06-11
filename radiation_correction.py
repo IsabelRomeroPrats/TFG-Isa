@@ -1,149 +1,172 @@
 import numpy as np
+import os
+import matplotlib.pyplot as plt
 import cv2
 from scipy.constants import sigma  # Boltzmann constant (sigma)
-from PIL import Image
 
-# Define the constants for the new E_ref equation
-k1 = 1.0026
-k2 = 60.392
+# Define the resolution for both continuous and discrete heatmaps
+continuous_shape = (500, 500)  # Continuous 480x640 heatmap
+m, n = 20, 20  # Discrete heatmap 15x20
 
-def calculate_radiation(E_tot, e, T_real):
-    """
-    Calculate E_ref using the formula:
-    E_ref = E_tot - E_emit
+# Define the default parameters
+# tau = 0.89
+tau = 1
 
-    Args:
-        E_tot (float): Total radiation energy at the selected point.
-        e (float): Real emissivity of the material.
-        T_real (float): Real temperature (in Kelvin) from the thermocouple.
 
-    Returns:
-        float: Reflected radiation energy (E_ref).
-    """
-    # Calculate E_emit
-    E_emit = e * sigma * T_real**4
+def temperature_to_radiance(temp_matrix):
+    return sigma * (temp_matrix ** 4)
 
-    # Calculate E_ref
-    E_ref = E_tot - E_emit
 
-    return E_ref
+def visualize_heatmap(matrix, title, colorbar_label, cmap='hot'):
+    plt.figure(figsize=(8, 6))
+    plt.imshow(matrix, cmap=cmap, interpolation='nearest')
+    plt.colorbar(label=colorbar_label)
+    plt.xlabel("Pixel X-axis")
+    plt.ylabel("Pixel Y-axis")
+    plt.title(title)
+    plt.show()
 
-def calculate_Tref(E_ref):
-    """
-    Calculate T_ref from E_ref using the formula:
-    E_ref = k1 * sigma * T_ref^4 + k2
 
-    Args:
-        E_ref (float): Reflected radiation energy.
+# Convert to discrete heatmap
+def convert_discrete(continuous_heatmap):
+    cell_height, cell_width = continuous_shape[0] // m, continuous_shape[1] // n
+    discrete_heatmap = np.zeros((m, n), dtype=np.float32)
 
-    Returns:
-        float: Calculated reference temperature (T_ref) in Kelvin.
-    """
-    # Rearrange the equation to solve for T_ref
-    T_ref = ((E_ref - k2) / (k1 * sigma)) ** 0.25
-    return T_ref
+    for i in range(m):
+        for j in range(n):
+            y_start, y_end = i * cell_height, (i + 1) * cell_height
+            x_start, x_end = j * cell_width, (j + 1) * cell_width
+            block = continuous_heatmap[y_start:y_end, x_start:x_end]
+            discrete_heatmap[i, j] = np.mean(block)
 
-def normalize_tif_for_display(tif_data):
-    """
-    Normalize .tif data to the 0-255 range for visualization.
+    return discrete_heatmap
 
-    Args:
-        tif_data (np.array): Radiometric .tif data.
 
-    Returns:
-        np.array: Normalized uint8 image for display.
-    """
-    min_val = np.min(tif_data)
-    max_val = np.max(tif_data)
+def multiply_emissivity(radiance_heatmap, emissivity_matrix):
 
-    if min_val != max_val:
-        normalized_data = np.interp(tif_data, (min_val, max_val), (0, 255))
-    else:
-        # Edge case: if all values are identical, create a uniform black image
-        normalized_data = np.zeros_like(tif_data)
+    # Resize emissivity matrix to match the continuous heatmap
+    emissivity_resized = cv2.resize(emissivity_matrix, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
 
-    return normalized_data.astype(np.uint8)
+    assert radiance_heatmap.shape == continuous_shape, "La imagen de radiancia no tiene el tamaño esperado"
+    assert emissivity_matrix.shape == (m, n), "La matriz de emisividad discreta no tiene el tamaño esperado"
+ 
+    # Create Discrete Heatmap
+    radiance_discrete_heatmap = convert_discrete(radiance_heatmap)
 
-def get_user_inputs(image, aligned_radiometric_data):
-    """
-    Allow the user to click on specific points on the image and input the required values
-    to calculate Eref (Etot, real emissivity, and real temperature).
+    # Apply emissivity correction to both heatmaps
+    radiance_heatmap_continuous = radiance_heatmap * emissivity_resized
+    radiance_heatmap_discrete = radiance_discrete_heatmap * emissivity_matrix
 
-    Args:
-        image (np.array): The image to display for point selection.
-        aligned_radiometric_data (np.array): Matrix containing aligned radiometric data.
+    return radiance_heatmap_continuous, radiance_heatmap_discrete
 
-    Returns:
-        list: List of dictionaries with Etot, Eemit, Eref, Tref, and Tfin values for each selected point.
-    """
-    # Convert radiometric data to a displayable image
-    display_image = normalize_tif_for_display(aligned_radiometric_data)
 
-    user_points = []  # To store the pixel coordinates selected by the user
-    Etot_values = []  # To store Etot values for the selected points
-    Eemit_values = []  # To store Eemit values for the selected points
-    Eref_values = []   # To store the calculated Eref values
-    Tref_values = []   # To store the calculated Tref values
-    Tfin_values = []   # To store the calculated Tfin values
+def divide_emissivity(radiance_heatmap, emissivity_matrix):
+ 
+    # Resize emissivity matrix to match the continuous heatmap
+    emissivity_resized = cv2.resize(emissivity_matrix, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
 
-    def click_event(event, x, y, flags, param):
-        """Callback function for mouse click events."""
-        if event == cv2.EVENT_LBUTTONDOWN:
-            # Record the selected point
-            user_points.append((x, y))
-            
-            # Get the radiometric value from the aligned radiometric data matrix
-            T_camera = aligned_radiometric_data[y, x]  # Assuming the matrix matches image coordinates
+    # Create Discrete Heatmap
+    radiance_discrete_heatmap = convert_discrete(radiance_heatmap)
 
-            # Calculate Etot
-            Etot = sigma * T_camera**4
-            print(f"Selected point: ({x}, {y}), T_camera: {T_camera} K, Etot: {Etot}")
+    # Apply emissivity correction to both heatmaps
+    radiance_heatmap_continuous = radiance_heatmap / emissivity_resized
+    radiance_heatmap_discrete = radiance_discrete_heatmap / emissivity_matrix
 
-            # Get real emissivity and temperature from the user
-            e_real = float(input(f"Enter the real emissivity (e) for point ({x}, {y}): "))
-            T_real = float(input(f"Enter the real temperature (T_real in Kelvin) for point ({x}, {y}): "))
+    return radiance_heatmap_continuous, radiance_heatmap_discrete
 
-            # Calculate Eemit and Eref
-            E_emit = e_real * sigma * T_real**4
-            E_ref = Etot - E_emit
 
-            # Calculate T_ref from E_ref
-            T_ref = calculate_Tref(E_ref)
+## CORRECTION IMAGE
 
-            # Calculate T_fin based on the formula
-            T_fin = (T_camera - T_ref) / e_real
+def correction_image(temperature, heatmap, emissivity_matrix):
 
-            # Store the values
-            Etot_values.append(Etot)
-            Eemit_values.append(E_emit)
-            Eref_values.append(E_ref)
-            Tref_values.append(T_ref)
-            Tfin_values.append(T_fin)
+    " R =  sigma * T_captured^4 - epsilon * sigma * T_ideal^4 "
 
-            print(f"E_emit: {E_emit}, E_ref: {E_ref}, T_ref: {T_ref}, T_fin: {T_fin}")
+    " R = sigma * T_ideal^4 - epsilon * sigma * T_captured^4"
 
-    # Display the normalized radiometric image and set up the click event
-    cv2.imshow('Select Points', display_image)
-    cv2.setMouseCallback('Select Points', click_event)
+    # Generate both heatmaps
+    nonradiance_continuous_ideal_heatmap = np.full(continuous_shape, temperature, dtype=np.float32)
+    ideal_heatmap = temperature_to_radiance(nonradiance_continuous_ideal_heatmap)
 
-    print("Click on points where thermocouples are located. Press 'q' when done.")
-    while True:
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q') or len(user_points) >= 5:  # Quit when 'q' is pressed or enough points selected
-            break
+    radiance_heatmap = temperature_to_radiance(heatmap)
+    radiance_heatmap = cv2.resize(radiance_heatmap, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
 
-    cv2.destroyAllWindows()
+    visualize_heatmap(radiance_heatmap, f"Primera Radiancia (T={temperature}K)", "Energy difference (W/m²)")
 
-    # Package the data into a list of dictionaries
-    data = []
-    for i in range(len(user_points)):
-        data.append({
-            'point': user_points[i],
-            'Etot': Etot_values[i],
-            'Eemit': Eemit_values[i],
-            'Eref': Eref_values[i],
-            'Tref': Tref_values[i],
-            'Tfin': Tfin_values[i]
-        })
+    # Apply emissivity correction
+    ideal_heatmap_continuous, _ = multiply_emissivity(ideal_heatmap, emissivity_matrix)
 
-    return data
+    # Math
+    correction_T =  radiance_heatmap - ideal_heatmap_continuous
+
+    # Convert to discrete
+    correction_T_discrete = convert_discrete(correction_T)
+
+    # Visualize the results
+    visualize_heatmap(correction_T, f"Error Radiation Heatmap Conitnuous (T={temperature}K)", "Energy difference (W/m²)")
+    visualize_heatmap(correction_T_discrete, f"Error Radiation Heatmap Discrete (T={temperature}K)", "Energy difference (W/m²)")
+
+    # Saving the results
+    folder_name = f"T{int(temperature)}"
+    os.makedirs(folder_name, exist_ok=True)
+
+    file_path = os.path.join(folder_name, f"correction_T{int(temperature)}.npy")
+    np.save(file_path, correction_T)
+
+    file_path = os.path.join(folder_name, f"correction_T{int(temperature)}_discrete.npy")
+    np.save(file_path, correction_T_discrete)
+
+    return correction_T, correction_T_discrete
+
+
+## TRUE TEMPERATURE
+
+def final_image(temperature, heatmap, correction_image, emissivity_matrix):
+
+    " T_real = [(sigma * T_heatmap^4 - R)/(tau * epsilon * sigma)]^(1/4)"
+
+    # Generate both heatmaps
+    radiance_heatmap = temperature_to_radiance(heatmap) # captured by the camera === J
+    radiance_heatmap = cv2.resize(radiance_heatmap, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
+
+    visualize_heatmap(radiance_heatmap, f"Prueba radiance_heatmap (T={temperature}K)", "Energy difference (W/m²)")
+    visualize_heatmap(correction_image, f"Prueba prueba-correction (T={temperature}K)", "Energy difference (W/m²)")
+
+
+    # Apply emissivity correction
+    minus = radiance_heatmap - correction_image
+    radiometric_heatmap, _ = divide_emissivity(minus, emissivity_matrix)
+    
+    visualize_heatmap(radiometric_heatmap, f"Prueba radiance_depsuesemisividad (T={temperature}K)", "Energy difference (W/m²)")
+
+    # Apply transmissivity
+    true_radiometric_heatmap = radiometric_heatmap / tau # true radiance
+    visualize_heatmap(radiometric_heatmap, f"Prueba radiance_heatmap (T={temperature}K)", "Energy difference (W/m²)")
+
+    # Obtain temperature
+    true_temperature = (true_radiometric_heatmap / sigma)**(1/4)
+
+    # Convert to discrete
+    true_radiometric_heatmap_discrete = convert_discrete(true_radiometric_heatmap)
+    true_temperature_discrete = convert_discrete(true_temperature)
+
+    # Visualize the results
+
+    visualize_heatmap(true_radiometric_heatmap, f"Radiometric Heatmap Continuous (T={temperature}K)", "Energy difference (W/m²)")
+    visualize_heatmap(true_radiometric_heatmap_discrete, f"Radiometric Heatmap Discrete (T={temperature}K)", "Energy difference (W/m²)")
+
+    visualize_heatmap(true_temperature, f"True Temperature Heatmap Continuous (T={temperature}K)", "(K)")
+    visualize_heatmap(true_temperature_discrete, f"True Temperature Heatmap Discrete (T={temperature}K)", "(K)")
+
+   # Saving the results
+    folder_name = f"T{int(temperature)}"
+    os.makedirs(folder_name, exist_ok=True)
+
+    file_path = os.path.join(folder_name, f"radiometric_T{int(temperature)}.npy")
+    np.save(file_path, true_radiometric_heatmap)
+    file_path = os.path.join(folder_name, f"radiometric_T{int(temperature)}_discrete.npy")
+    np.save(file_path, true_radiometric_heatmap_discrete)
+
+    file_path = os.path.join(folder_name, f"true_temperature_T{int(temperature)}.npy")
+    np.save(file_path, true_temperature)
+    file_path = os.path.join(folder_name, f"true_temperature_T{int(temperature)}_discrete.npy")
+    np.save(file_path, true_temperature_discrete)

@@ -4,17 +4,7 @@ import matplotlib.pyplot as plt
 
 # Initialize emissivity matrix
 def initialize_emissivity_matrix(base_emissivity, m, n):
-    """
-    Initializes an emissivity matrix with the base emissivity value.
-    
-    Args:
-        base_emissivity (float): The base emissivity value for the PCB.
-        m (int): Number of rows in the matrix.
-        n (int): Number of columns in the matrix.
-    
-    Returns:
-        np.array: Emissivity matrix of size m x n.
-    """
+   
     emissivity_matrix = np.full((m, n), base_emissivity)
     return emissivity_matrix
 
@@ -24,7 +14,6 @@ shape_emissivities = []  # Stores emissivity values for each shape
 
 # Callback functions to select points for polygons and circles
 def select_polygon(event, x, y, flags, param):
-    """Callback function to select corners of a polygon."""
     global polygon_coordinates
     if event == cv2.EVENT_LBUTTONDOWN:
         polygon_coordinates.append((x, y))
@@ -32,7 +21,6 @@ def select_polygon(event, x, y, flags, param):
         cv2.imshow('Select Polygon', image_copy)
 
 def select_circle(event, x, y, flags, param):
-    """Callback function to select points on the perimeter of a circle."""
     global circle_coordinates
     if event == cv2.EVENT_LBUTTONDOWN:
         circle_coordinates.append((x, y))
@@ -40,12 +28,6 @@ def select_circle(event, x, y, flags, param):
         cv2.imshow('Select Circle', image_copy)
 
 def define_shape(image_rgb):
-    """
-    Allows the user to define polygons (3-6 corners) or circles.
-    
-    Args:
-        image_rgb (np.array): The RGB image to define shapes on.
-    """
     global image_copy, polygon_coordinates, circle_coordinates
 
     while True:
@@ -105,21 +87,7 @@ def define_shape(image_rgb):
 
 # Update the emissivity matrix based on the defined shapes
 def update_emissivity_matrix(emissivity_matrix, shapes, m, n, height, width, base_emissivity):
-    """
-    Updates the emissivity matrix based on the shapes (polygons and circles) defined by the user.
-    
-    Args:
-        emissivity_matrix (np.array): The existing emissivity matrix.
-        shapes (list): List of shapes defined by the user.
-        m (int): Number of rows in the grid.
-        n (int): Number of columns in the grid.
-        height (int): Height of the image.
-        width (int): Width of the image.
-        base_emissivity (float): The base emissivity value for the PCB.
-    
-    Returns:
-        np.array: Updated emissivity matrix.
-    """
+
     # Calculate the size of each grid cell
     cell_height = height / m
     cell_width = width / n
@@ -160,12 +128,7 @@ def update_emissivity_matrix(emissivity_matrix, shapes, m, n, height, width, bas
 
 # Draw and display shapes for user verification
 def draw_shapes(image_rgb):
-    """
-    Draws and fills all the defined shapes (polygons and circles) on the image for user verification.
-    
-    Args:
-        image_rgb (np.array): The RGB image to draw shapes on.
-    """
+
     image_with_shapes = image_rgb.copy()  # Copy the original image
 
     # Draw filled circles and polygons
@@ -188,12 +151,7 @@ def draw_shapes(image_rgb):
 
 # Visualize the emissivity matrix
 def visualize_emissivity_matrix(emissivity_matrix):
-    """
-    Displays the emissivity matrix as a heatmap.
-    
-    Args:
-        emissivity_matrix (np.array): The emissivity matrix to visualize.
-    """
+
     plt.imshow(emissivity_matrix, cmap='hot', interpolation='nearest')
     plt.colorbar(label='Emissivity')
     plt.title('Emissivity Matrix')
@@ -201,28 +159,15 @@ def visualize_emissivity_matrix(emissivity_matrix):
 
 # Print information about the defined shapes and their emissivity values
 def print_shape_info():
-    """
-    Prints the names and emissivity values of the defined shapes.
-    """
+   
     print("\nEmissivity information for defined shapes:")
     for i, (shape_type, emissivity) in enumerate(zip(shapes, shape_emissivities)):
         shape_name = f"{'Polygon' if shape_type[0] == 'polygon' else 'Circle'} {i+1}"
         print(f"{shape_name}: Emissivity = {emissivity}")
 
 # Main function to process emissivity based on the image and shapes
-def process_emissivity(image_rgb, base_emissivity, m=15, n=20):
-    """
-    Processes the emissivity matrix based on the image and user-defined shapes.
-    
-    Args:
-        image_rgb (np.array): The RGB image of the PCB.
-        base_emissivity (float): The base emissivity value.
-        m (int): Number of rows in the grid.
-        n (int): Number of columns in the grid.
-    
-    Returns:
-        np.array: Updated emissivity matrix.
-    """
+def process_emissivity(image_rgb, base_emissivity, m=20, n=20):
+
     height, width, _ = image_rgb.shape
 
     # Initialize the emissivity matrix
@@ -244,3 +189,5 @@ def process_emissivity(image_rgb, base_emissivity, m=15, n=20):
     print_shape_info()
 
     return emissivity_matrix
+
+

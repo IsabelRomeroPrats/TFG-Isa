@@ -6,76 +6,61 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import numpy as np
 
-def load_and_display_image(image_name):
-    """
-    Loads and displays the image from the 'Images' folder based on its extension.
-    
-    Args:
-        image_name (str): The name of the image file, including extension (e.g., 'image.jpg').
-    
-    Returns:
-        image (np.array or None): The loaded image if successful, otherwise None.
-    """
-    # Define the path to the "Images" folder
-    images_folder = "Images"
-    image_path = os.path.join(images_folder, image_name)
+# Nueva función para redimensionar matrices
+def matrix_resized(matrix, continuous_shape=(500, 500), m=20, n=20):
+    # Redimensionar continua
+    matrix_continuous = cv2.resize(matrix, (continuous_shape[1], continuous_shape[0]))
 
-    # Check if the file exists
-    if not os.path.exists(image_path):
-        print(f"Error: The file {image_name} was not found in the Images folder.")
-        return None
+    # Crear heatmap discreto
+    cell_height, cell_width = continuous_shape[0] // m, continuous_shape[1] // n
+    discrete_heatmap = np.zeros((m, n), dtype=np.float32)
 
-    # Detect the file extension
+    for i in range(m):
+        for j in range(n):
+            y_start, y_end = i * cell_height, (i + 1) * cell_height
+            x_start, x_end = j * cell_width, (j + 1) * cell_width
+            block = matrix_continuous[y_start:y_end, x_start:x_end]
+            discrete_heatmap[i, j] = np.mean(block)
+
+    return matrix_continuous, discrete_heatmap
+
+
+def load_and_display_image(image_name, temperature):
+
+    folder = f"T{int(temperature)}"
+    image_path = os.path.join(folder, image_name)
+
     extension = image_name.split('.')[-1].lower()
 
-    # Load and display image based on extension
     if extension in ['jpg', 'png']:
-        # Load the image using OpenCV (for non-radiometric images)
         image = cv2.imread(image_path)
         if image is None:
             print(f"Error: Could not load image {image_name}")
             return None
-        # Convert color from BGR to RGB for correct display
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         plt.imshow(image_rgb)
         plt.title(f"Loaded Image: {image_name}")
         plt.axis('off')
         plt.show()
         return image
-    
+
     elif extension == 'tif':
-        # Load .tif image (this is a placeholder, might need specific handling for radiometric .tif)
         image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
         if image is None:
             print(f"Error: Could not load .tif image {image_name}")
             return None
-        plt.imshow(image, cmap='gray')  # Display .tif as grayscale image for now
+        plt.imshow(image, cmap='gray')
         plt.title(f"Loaded .tif Image: {image_name}")
         plt.axis('off')
         plt.show()
         return image
-    
+
     else:
         print(f"Unsupported file format: {extension}")
         return None
 
 
-
 def select_corners_jpg(image, calculate_rgb=True):
-    """
-    Permite al usuario seleccionar las esquinas manualmente en imágenes .jpg o .png.
-    Luego, alinea la imagen en base a las esquinas seleccionadas y la adapta a 640x480 píxeles.
-    Si calculate_rgb es True, también calcula y muestra la matriz de temperatura RGB.
-
-    Args:
-        image (np.array): La imagen cargada.
-        calculate_rgb (bool): Si es True, calcula la matriz de temperatura RGB.
-
-    Returns:
-        aligned_image_jpg (np.array): La imagen transformada y alineada.
-        temperature_matrix_jpg (np.array or None): Matriz de temperatura (RGB promedio) para cada celda, o None si calculate_rgb es False.
-        corners (list): Las coordenadas de las esquinas seleccionadas.
-    """
     corners = []
 
     def select_corners(event, x, y, flags, param):
@@ -84,143 +69,84 @@ def select_corners_jpg(image, calculate_rgb=True):
             cv2.circle(image, (x, y), 5, (0, 255, 0), -1)
             cv2.imshow('Select PCB Corners', image)
 
-    # Mostrar la imagen para seleccionar las esquinas
     cv2.imshow('Select PCB Corners', image)
     cv2.setMouseCallback('Select PCB Corners', select_corners)
 
-    print("Seleccione 4 esquinas del PCB haciendo clic en la imagen.")
+    print("Select 4 corners of the PCB by clicking on the image.")
     while len(corners) < 4:
         cv2.waitKey(1)
 
     cv2.destroyAllWindows()
+    print(f"Corners selected: {corners}")
 
-    print(f"Esquinas seleccionadas: {corners}")
-
-    # Definir las medidas fijas: 640 píxeles de ancho y 480 píxeles de alto
     width, height = 640, 480
-
-    # Definir las esquinas objetivo para alinear la imagen en un espacio de 640x480 píxeles
     target_corners = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype='float32')
     corners = np.array(corners, dtype='float32')
-
-    # Crear la matriz de transformación usando las esquinas seleccionadas
     matrix = cv2.getPerspectiveTransform(corners, target_corners)
-    
-    # Aplicar la transformación para alinear la imagen a 640x480 píxeles
     aligned_image_jpg = cv2.warpPerspective(image, matrix, (width, height))
 
-    # Mostrar la imagen alineada
     plt.figure(figsize=(8, 6))
     plt.imshow(cv2.cvtColor(aligned_image_jpg, cv2.COLOR_BGR2RGB))
-    plt.title("Imagen JPG Alineada")
+    plt.title("Aligned JPG Image")
     plt.axis('off')
     plt.show()
 
-    # Si no se debe calcular la matriz RGB, regresar sin procesar la matriz de temperatura
     if not calculate_rgb:
         return aligned_image_jpg, None, corners
 
-    # Dimensiones de la malla
-    m, n = 20, 15  # m: filas, n: columnas
+    matrix_continuous, temperature_matrix_jpg = matrix_resized(aligned_image_jpg)
 
-    # Calcular el tamaño de cada celda en la malla
-    cell_height = height / m
-    cell_width = width / n
-
-    # Crear una matriz para almacenar los valores promedio de color (temperatura RGB)
-    temperature_matrix_jpg = np.zeros((m, n, 3))  # 3 canales para RGB
-
-    # Recorrer la imagen y calcular el color promedio en cada celda de la malla
-    for i in range(m):
-        for j in range(n):
-            y_start = int(i * cell_height)
-            y_end = int((i + 1) * cell_height) if i != m - 1 else height
-            x_start = int(j * cell_width)
-            x_end = int((j + 1) * cell_width) if j != n - 1 else width
-
-            # Extraer la región de interés (ROI) para la celda actual
-            cell_jpg = aligned_image_jpg[y_start:y_end, x_start:x_end]
-
-            # Calcular el color promedio en la celda (sin promediar entre canales RGB)
-            avg_color_jpg = np.mean(cell_jpg, axis=(0, 1))
-
-            # Almacenar el color promedio en la matriz de temperatura
-            temperature_matrix_jpg[i, j] = avg_color_jpg
-
-    # Mostrar la matriz de temperatura (valores RGB promedio) como una imagen
-    plt.figure(figsize=(8, 6))
-    plt.imshow(temperature_matrix_jpg.astype(int))
-    plt.title("Matriz de Temperatura (Color Promedio por Celda) - JPG")
+    plt.figure(figsize=(5, 5))
+    plt.imshow(temperature_matrix_jpg, cmap='hot', interpolation='nearest')
+    plt.colorbar(label='Temperature (relative scale)')
+    plt.title("Temperature Matrix - JPG")
     plt.axis('off')
     plt.show()
 
-    # Imprimir un tramo de la matriz RGB para asegurar que no está en escala de grises
-    print("Tramo de la matriz RGB de la imagen JPG:")
-    print(temperature_matrix_jpg[:5, :5, :])  # Imprimir los primeros 5x5 elementos de la matriz RGB
+    print("Sample of the temperature matrix:")
+    print(temperature_matrix_jpg[:5, :5])
 
     return aligned_image_jpg, temperature_matrix_jpg, corners
 
 
+def select_corners_tif(tif_data, temperature):
+    import os
+    from PIL import Image
 
+    folder = f"T{int(temperature)}"
+    os.makedirs(folder, exist_ok=True)
+    temp_png_path = os.path.join(folder, "temp_corner_selection.png")
 
-def select_corners_tif(image_path, tif_data, temp_png_path):
-    """
-    Crea un archivo .png temporal para permitir la selección de esquinas en imágenes .tif
-    y luego aplica las mismas transformaciones a la imagen radiométrica original adaptada a 640x480 píxeles.
-    Muestra tanto la imagen visual alineada como el heatmap de los datos radiométricos.
+    # Convertimos a Kelvin y normalizamos
+    tif_data = tif_data + 273.15
+    min_val = np.min(tif_data)
+    max_val = np.max(tif_data)
 
-    Args:
-        image_path (str): Ruta del archivo .tif original.
-        tif_data (np.array): Datos radiométricos del archivo .tif.
-        temp_png_path (str): Ruta del archivo .png temporal.
+    if min_val != max_val:
+        normalized_data = np.interp(tif_data, (min_val, max_val), (0, 255))
+    else:
+        normalized_data = np.zeros_like(tif_data)
 
-    Returns:
-        aligned_visual_tif (np.array): Imagen visualmente alineada del .tif.
-        aligned_radiometric_data (np.array): Datos radiométricos alineados.
-    """
-    try:
-        # Abrir la imagen .tif usando PIL para generar el .png
-        tif_image = Image.open(image_path)
+    # Aumentamos contraste y guardamos PNG temporal
+    uint8_data = normalized_data.astype(np.uint8)
+    enhanced_data = cv2.equalizeHist(uint8_data)
+    temp_image = Image.fromarray(enhanced_data)
+    temp_image.save(temp_png_path, format='PNG')
+    print(f"Temporary PNG saved at: {temp_png_path}")
 
-        # Verificar el modo de la imagen y convertirla si es necesario
-        if tif_image.mode == 'F':
-            print("Convirtiendo la imagen de modo 'F' a 'L' (escala de grises) para generar .png")
-            tif_image = tif_image.convert('L')  # Convertir a escala de grises (solo para visualización .png)
-        elif tif_image.mode != 'RGB':
-            tif_image = tif_image.convert('RGB')  # Convertir a RGB si es necesario
+    png_image = cv2.imread(temp_png_path)
+    if png_image is None:
+        raise ValueError("Error loading the temporary .png image.")
 
-        # Guardar la imagen convertida como un archivo .png temporal (sin pérdida de calidad)
-        tif_image.save(temp_png_path, format='PNG')  # PNG preserves quality better than JPEG
+    aligned_visual_tif, _, corners = select_corners_jpg(png_image, calculate_rgb=False)
 
-        # Cargar la imagen .png temporal para la selección de esquinas (no se usará para procesamiento RGB)
-        png_image = cv2.imread(temp_png_path)
+    if corners is None or len(corners) != 4:
+        raise ValueError("Corner selection error. Make sure to select all 4 corners.")
 
-        # Verifica que la imagen temporal se haya cargado correctamente
-        if png_image is None:
-            raise ValueError("Error al cargar la imagen temporal .png.")
+    width, height = 640, 480
+    target_corners = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype='float32')
+    corners = np.array(corners, dtype='float32')
+    matrix = cv2.getPerspectiveTransform(corners, target_corners)
+    aligned_radiometric_data = cv2.warpPerspective(tif_data, matrix, (width, height))
 
-        # Usar la función de selección de esquinas en la imagen mejorada (sin calcular matriz RGB)
-        aligned_visual_tif, _, corners = select_corners_jpg(png_image, calculate_rgb=False)
-
-        # Verifica que se hayan seleccionado las esquinas correctamente
-        if corners is None or len(corners) != 4:
-            raise ValueError("Error en la selección de esquinas. Asegúrate de seleccionar las 4 esquinas.")
-
-        # Aplicar las mismas transformaciones a los datos radiométricos .tif
-        width, height = 640, 480
-
-        # Definir las esquinas objetivo para alinear la imagen en un espacio de 640x480 píxeles
-        target_corners = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype='float32')
-        corners = np.array(corners, dtype='float32')
-
-        # Crear la matriz de transformación basada en las esquinas seleccionadas
-        matrix = cv2.getPerspectiveTransform(corners, target_corners)
-
-        # Aplicar la transformación a los datos radiométricos .tif (manteniendo los datos radiométricos)
-        aligned_radiometric_data = cv2.warpPerspective(tif_data, matrix, (width, height))
-
-        return aligned_visual_tif, aligned_radiometric_data
-
-    except Exception as e:
-        print(f"Error durante el procesamiento de la imagen .tif: {e}")
-        return None, None
+    return aligned_visual_tif, aligned_radiometric_data

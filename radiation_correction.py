@@ -128,19 +128,18 @@ def final_image(temperature, heatmap, correction_image, emissivity_matrix):
     radiance_heatmap = temperature_to_radiance(heatmap) # captured by the camera === J
     radiance_heatmap = cv2.resize(radiance_heatmap, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
 
-    visualize_heatmap(radiance_heatmap, f"Prueba radiance_heatmap (T={temperature}K)", "Energy difference (W/m²)")
-    visualize_heatmap(correction_image, f"Prueba prueba-correction (T={temperature}K)", "Energy difference (W/m²)")
+    visualize_heatmap(radiance_heatmap, f"Radiance map before correction (T={temperature}K)", "Energy difference (W/m²)")
+    visualize_heatmap(correction_image, f"Radiance reflection used for correction (T={temperature}K)", "Energy difference (W/m²)")
 
 
     # Apply emissivity correction
     minus = radiance_heatmap - correction_image
     radiometric_heatmap, _ = divide_emissivity(minus, emissivity_matrix)
     
-    visualize_heatmap(radiometric_heatmap, f"Prueba radiance_depsuesemisividad (T={temperature}K)", "Energy difference (W/m²)")
+    visualize_heatmap(radiometric_heatmap, f"Radiance heatmap after emissivity (T={temperature}K)", "Energy difference (W/m²)")
 
     # Apply transmissivity
     true_radiometric_heatmap = radiometric_heatmap / tau # true radiance
-    visualize_heatmap(radiometric_heatmap, f"Prueba radiance_heatmap (T={temperature}K)", "Energy difference (W/m²)")
 
     # Obtain temperature
     true_temperature = (true_radiometric_heatmap / sigma)**(1/4)

@@ -27,7 +27,7 @@ def calibrate_jpg_temperature(image_rgb, temperature_matrix_jpg, emissivity_matr
             brightness = np.mean(cv2.cvtColor(image_rgb[i:i+1, j:j+1], cv2.COLOR_RGB2GRAY))
 
             # Apply emissivity correction
-            emissivity = emissivity_matrix[i // (height // 15), j // (width // 20)]  # Use the 15x20 emissivity matrix
+            emissivity = emissivity_matrix[i // (height // 20), j // (width // 20)]  # Use the 20x20 emissivity matrix
             if emissivity > 0:
                 brightness /= emissivity
             else:
@@ -79,7 +79,7 @@ def calibrate_jpg_temperature(image_rgb, temperature_matrix_jpg, emissivity_matr
 def visualize_temperature_matrix_jpg(temperature_matrix):
     """
     Displays the calibrated full-resolution temperature matrix (480x640) as a heatmap, then discretizes it 
-    to a 15x20 matrix and displays the discretized matrix as a separate heatmap.
+    to a 20x20 matrix and displays the discretized matrix as a separate heatmap.
 
     Args:
         temperature_matrix (np.array): The calibrated temperature matrix (480x640).
@@ -97,8 +97,8 @@ def visualize_temperature_matrix_jpg(temperature_matrix):
     # --- Discretized heatmap: Now discretize the full-resolution matrix ---
     height, width = full_resolution_matrix.shape  # Get the original matrix dimensions
     
-    # Define the grid dimensions for discretization (15x20)
-    m, n = 15, 20
+    # Define the grid dimensions for discretization (10x20)
+    m, n = 20, 20
     
     # Calculate the size of each grid cell (32x32 for example)
     cell_height = height // m
@@ -126,11 +126,11 @@ def visualize_temperature_matrix_jpg(temperature_matrix):
             else:
                 discretized_matrix[i, j] = np.nan  # Mark as nan if no data
 
-    # Plot the heatmap for the discretized matrix (15x20)
+    # Plot the heatmap for the discretized matrix (10x20)
     plt.figure(figsize=(8, 6))
     plt.imshow(discretized_matrix, cmap='hot', interpolation='nearest')
     plt.colorbar(label='Temperature (K)')
-    plt.title('Discretized Temperature Heatmap (15x20)')
+    plt.title('Discretized Temperature Heatmap (20x20)')
     plt.show()
 
     # Print the discretized temperature matrix as an array

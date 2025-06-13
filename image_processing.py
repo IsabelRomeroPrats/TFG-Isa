@@ -59,13 +59,29 @@ def load_and_display_image(image_name, temperature):
         print(f"Unsupported file format: {extension}")
         return None
 
+def warp_perspective_from_points(image, points, output_size=(400, 400)):
+    """
+    Realiza una transformación de perspectiva a partir de 4 puntos.
 
-def warp_perspective_from_points(image, source_points, width=640, height=480):
-    if len(source_points) != 4:
-        raise ValueError("You must provide exactly 4 source points.")
+    Parameters:
+        image (np.ndarray): Imagen de entrada.
+        points (list): Lista de 4 puntos [(x1, y1), (x2, y2), ...].
+        output_size (tuple): Tamaño de salida (ancho, alto).
 
-    target_corners = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype='float32')
-    source = np.array(source_points, dtype='float32')
-    matrix = cv2.getPerspectiveTransform(source, target_corners)
-    aligned = cv2.warpPerspective(image, matrix, (width, height))
-    return aligned
+    Returns:
+        np.ndarray: Imagen transformada.
+    """
+    assert len(points) == 4, "Se requieren exactamente 4 puntos."
+
+    pts_src = np.array(points, dtype=np.float32)
+    pts_dst = np.array([
+        [0, 0],
+        [output_size[0] - 1, 0],
+        [output_size[0] - 1, output_size[1] - 1],
+        [0, output_size[1] - 1]
+    ], dtype=np.float32)
+
+    matrix = cv2.getPerspectiveTransform(pts_src, pts_dst)
+    warped = cv2.warpPerspective(image, matrix, output_size)
+
+    return warped

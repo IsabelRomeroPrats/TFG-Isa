@@ -10,7 +10,6 @@ m, n = 20, 20  # Discrete heatmap 15x20
 
 # Define the default parameters
 # tau = 0.89
-tau = 1
 
 
 def temperature_to_radiance(temp_matrix):
@@ -120,7 +119,7 @@ def correction_image(temperature, heatmap, emissivity_matrix):
 
 ## TRUE TEMPERATURE
 
-def final_image(temperature, heatmap, correction_image, emissivity_matrix):
+def final_image(temperature, heatmap, correction_image, emissivity_matrix, tau):
 
     " T_real = [(sigma * T_heatmap^4 - R)/(tau * epsilon * sigma)]^(1/4)"
 

@@ -6,7 +6,7 @@ import cv2
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton,
     QFileDialog, QVBoxLayout, QWidget, QHBoxLayout,
-    QLineEdit, QMessageBox, QGridLayout
+    QLineEdit, QMessageBox, QGridLayout, QSlider
 )
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import Qt, QTimer
@@ -342,6 +342,31 @@ class IRCorrectionApp(QMainWindow):
         # Actualizar al modificar formas
         self.image_label_rgb.canvas_callback = self.update_emissivity_canvas
 
+        superpose_layout = QVBoxLayout()
+
+        self.superpose_label = QLabel()
+        self.superpose_label.setMinimumSize(400, 400)
+        self.superpose_label.setAlignment(Qt.AlignCenter)
+        superpose_layout.addWidget(self.superpose_label)
+
+        self.slider_rgb = QSlider(Qt.Horizontal)
+        self.slider_rgb.setRange(0, 100)
+        self.slider_rgb.setValue(50)
+
+        self.slider_tif = QSlider(Qt.Horizontal)
+        self.slider_tif.setRange(0, 100)
+        self.slider_tif.setValue(50)
+
+        superpose_layout.addWidget(QLabel("RGB Transparency"))
+        superpose_layout.addWidget(self.slider_rgb)
+        superpose_layout.addWidget(QLabel("TIF Transparency"))
+        superpose_layout.addWidget(self.slider_tif)
+
+        self.slider_rgb.valueChanged.connect(self.update_superpose)
+        self.slider_tif.valueChanged.connect(self.update_superpose)
+
+        right_layout.addLayout(superpose_layout)
+
 ###
 
 ### FUNCIONES
@@ -405,6 +430,8 @@ class IRCorrectionApp(QMainWindow):
 
         self.image_rgb = aligned
         self.image_label_rgb.set_numpy_image(aligned)
+        self.update_superpose()
+
         QMessageBox.information(self, "Alignment Done", "RGB image aligned with adjusted corners.")
 
     def select_corners_rgb(self):
@@ -518,6 +545,7 @@ class IRCorrectionApp(QMainWindow):
         self.tif_corners = self.image_label_tif.points.copy()
         self.image_data = aligned
         self.image_label_tif.set_numpy_image(aligned, update_display=True, clear_points=True)
+        self.update_superpose()
 
         QMessageBox.information(self, "Done", "TIF image aligned with adjusted corners.")
 
@@ -572,6 +600,48 @@ class IRCorrectionApp(QMainWindow):
         if self.image_rgb is not None:
             self.image_rgb = cv2.rotate(self.image_rgb, cv2.ROTATE_90_CLOCKWISE)
             self.image_label_rgb.set_numpy_image(self.image_rgb)
+
+
+###☺
+
+### SUPERPONER
+
+###
+
+    def update_superpose(self):
+        if self.image_rgb is None or self.image_data is None:
+            return
+
+        rgb = self.image_rgb.copy()
+        tif = self.image_data.copy()
+
+        # Convert both to BGR for blending
+        if len(rgb.shape) == 3:
+            rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        else:
+            rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_GRAY2BGR)
+
+        if len(tif.shape) == 2:
+            tif_bgr = cv2.cvtColor(tif, cv2.COLOR_GRAY2BGR)
+        else:
+            tif_bgr = tif.copy()
+
+        # Resize to match
+        if tif_bgr.shape[:2] != rgb_bgr.shape[:2]:
+            tif_bgr = cv2.resize(tif_bgr, (rgb_bgr.shape[1], rgb_bgr.shape[0]))
+
+        alpha_rgb = self.slider_rgb.value() / 100.0
+        alpha_tif = self.slider_tif.value() / 100.0
+
+        combined_bgr = cv2.addWeighted(rgb_bgr, alpha_rgb, tif_bgr, alpha_tif, 0)
+        combined_rgb = cv2.cvtColor(combined_bgr, cv2.COLOR_BGR2RGB)
+
+        h, w, ch = combined_rgb.shape
+        bytes_per_line = ch * w
+        qimg = QImage(combined_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        self.superpose_label.setPixmap(QPixmap.fromImage(qimg).scaled(
+            self.superpose_label.size(), Qt.KeepAspectRatio))
+
 
 ###
 

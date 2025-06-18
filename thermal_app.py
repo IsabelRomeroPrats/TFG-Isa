@@ -34,16 +34,19 @@ class ClickableImageLabel(QLabel):
         self.expected_points = 4
         self.canvas_callback = None
         self.emissivity_matrix_callback = None
+        self.dragging_point = None
 
-    def set_numpy_image(self, image, update_display=True):
+    def set_numpy_image(self, image, update_display=True, clear_points=True):
         self.image_np = image.copy()
-        self.points.clear()
-        self.shapes.clear()
-        self.shape_emissivities.clear()
+        if clear_points:
+            self.points.clear()
+            self.shapes.clear()
+            self.shape_emissivities.clear()
         if update_display:
             self.update_display()
         if self.canvas_callback:
             self.canvas_callback()
+
 
     def mousePressEvent(self, event):
         if self.image_np is None or self.pixmap() is None:
@@ -70,56 +73,58 @@ class ClickableImageLabel(QLabel):
         x_real = int(x_rel * img_w)
         y_real = int(y_rel * img_h)
 
-        self.points.append((x_real, y_real))
-        self.update_display()
+        # Si estoy ajustando, comprobar si clico cerca de un punto existente
+        if self.mode == 'adjust_corners' and self.points:
+            for i, (px, py) in enumerate(self.points):
+                if abs(px - x_real) < 15 and abs(py - y_real) < 15:
+                    self.dragging_point = i
+                    return
 
-        if len(self.points) == self.expected_points:
-            if self.mode == 'corners':
+        # Si estoy en modo corners, añadir puntos normalmente
+        if self.mode == 'corners':
+            self.points.append((x_real, y_real))
+            self.update_display()
+            if len(self.points) == self.expected_points:
                 if self.callback:
                     self.callback(self.points)
-                return
 
-            from PyQt5.QtWidgets import QInputDialog
-            emissivity, ok = QInputDialog.getDouble(
-                self, "Emissivity", "Enter emissivity value (0-1):", min=0.01, max=1.0, decimals=3)
-            if not ok:
-                self.points.clear()
-                self.update_display()
-                return
+    def mouseMoveEvent(self, event):
+        if self.dragging_point is not None and self.image_np is not None:
+            pixmap = self.pixmap()
+            label_size = self.size()
+            scaled_pixmap = pixmap.scaled(label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled_w, scaled_h = scaled_pixmap.width(), scaled_pixmap.height()
+            x_offset = (label_size.width() - scaled_w) // 2
+            y_offset = (label_size.height() - scaled_h) // 2
 
-            if self.mode == 'circle':
-                pts = np.array(self.points, dtype=np.float32)
-                (cx, cy), radius = cv2.minEnclosingCircle(pts)
-                self.shapes.append(('circle', ((int(cx), int(cy)), int(radius))))
-            elif self.mode == 'polygon':
-                if len(self.points) == 3:
-                    self.shapes.append(('triangle', self.points.copy()))
-                else:
-                    self.shapes.append(('polygon', self.points.copy()))
+            x_move = event.pos().x()
+            y_move = event.pos().y()
+            if len(self.image_np.shape) == 3:
+                img_h, img_w = self.image_np.shape[:2]
+            else:
+                img_h, img_w = self.image_np.shape
+            x_rel = (x_move - x_offset) / scaled_w
+            y_rel = (y_move - y_offset) / scaled_h
+            x_real = int(x_rel * img_w)
+            y_real = int(y_rel * img_h)
 
-            self.shape_emissivities.append(emissivity)
-            if self.callback:
-                self.callback(self.shapes[-1], emissivity)
-
-            if self.canvas_callback:
-                self.canvas_callback()
-            if self.emissivity_matrix_callback:
-                self.emissivity_matrix_callback()
-
-            self.points = []
+            self.points[self.dragging_point] = (x_real, y_real)
             self.update_display()
+
+    def mouseReleaseEvent(self, event):
+        self.dragging_point = None
 
     def update_display(self):
         if self.image_np is None:
             return
 
-        # Preparar imagen de visualización, aceptando grises o RGB
         if len(self.image_np.shape) == 2:
             img_display = cv2.normalize(self.image_np, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             img_display = cv2.cvtColor(img_display, cv2.COLOR_GRAY2RGB)
         else:
             img_display = self.image_np.copy()
 
+        # Dibuja formas existentes
         for i, (tipo, datos) in enumerate(self.shapes):
             color = (0, 255, 0)
             if tipo == 'circle':
@@ -132,12 +137,21 @@ class ClickableImageLabel(QLabel):
                 centroid = np.mean(pts[:, 0, :], axis=0).astype(int)
                 cv2.putText(img_display, str(i+1), tuple(centroid), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
 
+        # Dibuja líneas de conexión entre puntos de corners
+        if len(self.points) >= 2:
+            for i in range(len(self.points)):
+                pt1 = self.points[i]
+                pt2 = self.points[(i + 1) % len(self.points)]
+                cv2.line(img_display, pt1, pt2, (255, 0, 0), 2)
+
+        # Dibuja puntos
         for pt in self.points:
             cv2.circle(img_display, pt, 6, (0, 0, 255), -1)
 
-        h, w, _ = img_display.shape
+        h, w = img_display.shape[:2]
         qimg = QImage(img_display.data, w, h, 3 * w, QImage.Format_RGB888)
         self.setPixmap(QPixmap.fromImage(qimg).scaled(self.size(), Qt.KeepAspectRatio))
+
 
 
 "--------------------------------------------------------------------------------------------"
@@ -157,11 +171,12 @@ class IRCorrectionApp(QMainWindow):
         
         #Almacenar imagen a color
         self.image_rgb = None  
-
         self.image_path = None
         self.image_data = None
         self.temperature = None
         self.emissivity = None
+        self.rgb_corners = []
+        self.tif_corners = []
 
         self.setup_ui()
 
@@ -218,25 +233,37 @@ class IRCorrectionApp(QMainWindow):
 
         corners_row = QHBoxLayout()
 
-        btn_corners_tif = QPushButton("Corners TIF")
+        # --- TIF ---
+
+        btn_reselect_tif = QPushButton("Re-select & Adjust TIF")
+        btn_apply_tif = QPushButton("Apply TIF Alignment")
         btn_rotate_tif = QPushButton("↻")
         btn_rotate_tif.setFixedWidth(30)
 
-        btn_corners_rgb = QPushButton("Corners RGB")
+        btn_reselect_tif.clicked.connect(self.reselect_and_adjust_tif)
+        btn_apply_tif.clicked.connect(self.apply_tif_alignment)
+        btn_rotate_tif.clicked.connect(self.rotate_tif_image)
+
+        corners_row.addWidget(btn_reselect_tif)
+        corners_row.addWidget(btn_apply_tif)
+        corners_row.addWidget(btn_rotate_tif)
+
+        # --- RGB ---
+        btn_reselect_rgb = QPushButton("Re-select & Adjust Corners RGB")
+        btn_apply_rgb = QPushButton("Apply RGB Alignment")
         btn_rotate_rgb = QPushButton("↻")
         btn_rotate_rgb.setFixedWidth(30)
 
-        btn_corners_tif.clicked.connect(self.select_corners_tif)
-        btn_corners_rgb.clicked.connect(self.select_corners_rgb)
-        btn_rotate_tif.clicked.connect(self.rotate_tif_image)
+        btn_reselect_rgb.clicked.connect(self.reselect_and_adjust_rgb)
+        btn_apply_rgb.clicked.connect(self.apply_rgb_alignment)
         btn_rotate_rgb.clicked.connect(self.rotate_rgb_image)
 
-        corners_row.addWidget(btn_corners_tif)
-        corners_row.addWidget(btn_rotate_tif)
-        corners_row.addWidget(btn_corners_rgb)
+        corners_row.addWidget(btn_reselect_rgb)
+        corners_row.addWidget(btn_apply_rgb)
         corners_row.addWidget(btn_rotate_rgb)
 
         left_layout.addLayout(corners_row)
+
 
         # Temperatura
         temp_layout = QHBoxLayout()
@@ -315,54 +342,184 @@ class IRCorrectionApp(QMainWindow):
         # Actualizar al modificar formas
         self.image_label_rgb.canvas_callback = self.update_emissivity_canvas
 
+###
+
+### FUNCIONES
+
+###
+
+#"-------------------------------------RGB---------------------------------------------"
+
     def load_rgb_image(self):
         fname, _ = QFileDialog.getOpenFileName(self, 'Open RGB image', '', 'Image files (*.jpg *.png *.bmp)')
         if fname:
             image = cv2.imread(fname)
-            if image is not None:
-                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                self.image_rgb = image_rgb
-                self.image_label_rgb.set_numpy_image(image_rgb)
-                self.update_emissivity_canvas()
-            else:
-                QMessageBox.warning(self, "Error", "Could not load RGB image.")
+        if image is not None:
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            self.image_rgb_original = image_rgb.copy()
+            self.image_rgb = image_rgb.copy()
+            self.image_label_rgb.set_numpy_image(self.image_rgb)
+            self.update_emissivity_canvas()
+            self.start_corner_selection()  
 
-    def update_emissivity_canvas(self):
-        matrix = self.build_emissivity_matrix()
-        if matrix is None:
+    def start_corner_selection(self):
+        self.image_label_rgb.points.clear()
+        self.image_label_rgb.mode = 'corners'
+
+        def on_points(points):
+            self.rgb_corners = points.copy()   
+            self.image_label_rgb.mode = 'adjust_corners'
+            QMessageBox.information(self, "Adjust Mode", "Now you can drag RGB corners to adjust.")
+
+        self.image_label_rgb.callback = on_points
+        self.image_label_rgb.update_display()
+        QMessageBox.information(self, "Select", "Click 4 corners on the RGB image.")
+
+    def reselect_and_adjust_rgb(self):
+        if self.image_rgb_original is None:
+            QMessageBox.warning(self, "Error", "Load RGB first.")
             return
-        self.ax.clear()
-        im = self.ax.imshow(matrix, cmap='hot', interpolation='nearest')
-        self.fig.colorbar(im, ax=self.ax, label='Emissivity')
-        self.ax.set_title("Emissivity Matrix")
-        self.canvas.draw()
+
+        self.image_rgb = self.image_rgb_original.copy()
+        self.image_label_rgb.set_numpy_image(self.image_rgb, update_display=False, clear_points=False)
+
+        if len(self.rgb_corners) != 4:
+            QMessageBox.warning(self, "Error", "Corners must be defined first.")
+            return
+
+        self.image_label_rgb.points = self.rgb_corners.copy()
+        self.image_label_rgb.mode = 'adjust_corners'
+        self.image_label_rgb.update_display()
+        QMessageBox.information(self, "Adjust Mode", "Drag RGB corners to adjust.")
+
+    def apply_rgb_alignment(self):
+        if len(self.image_label_rgb.points) != 4:
+            QMessageBox.warning(self, "Error", "Define 4 corners first.")
+            return
+
+        src_pts = np.array(self.image_label_rgb.points, dtype='float32')
+        dst_pts = np.array([[0, 0], [400, 0], [400, 400], [0, 400]], dtype='float32')
+
+        matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+        aligned = cv2.warpPerspective(self.image_rgb_original, matrix, (400, 400))
+
+        self.image_rgb = aligned
+        self.image_label_rgb.set_numpy_image(aligned)
+        QMessageBox.information(self, "Alignment Done", "RGB image aligned with adjusted corners.")
+
+    def select_corners_rgb(self):
+        if self.image_rgb is None:
+            QMessageBox.warning(self, "Error", "Load RGB image first.")
+            return
+
+        def on_4_points(points):
+            from image_processing import warp_perspective_from_points
+            aligned = warp_perspective_from_points(self.image_rgb, points, output_size=(400, 400))
+            self.image_rgb = aligned
+            self.image_label_rgb.set_numpy_image(aligned)
+            QMessageBox.information(self, "RGB aligned", "RGB image has been aligned.")
+
+        self.image_label_rgb.points.clear()
+        self.image_label_rgb.expected_points = 4
+        self.image_label_rgb.mode = 'corners'
+        self.image_label_rgb.callback = on_4_points
+        self.image_label_rgb.update_display()
+        QMessageBox.information(self, "Select", "Click 4 corners on the RGB image.")
+
+    def crop_rgb_image(self):
+        if self.image_rgb is None:
+            QMessageBox.warning(self, "Error", "Load RGB image first.")
+            return
+
+        # Mostrar ventana OpenCV para seleccionar ROI
+        image_bgr = cv2.cvtColor(self.image_rgb, cv2.COLOR_RGB2BGR)
+        roi = cv2.selectROI("Select Region", image_bgr, fromCenter=False, showCrosshair=True)
+        cv2.destroyAllWindows()
+
+        if roi == (0, 0, 0, 0):
+            QMessageBox.warning(self, "Warning", "No region selected.")
+            return
+
+        x, y, w, h = roi
+
+        # Definir corners de la ROI como si fueran puntos de warp
+        src_pts = np.array([
+            [x, y],
+            [x + w, y],
+            [x + w, y + h],
+            [x, y + h]
+        ], dtype='float32')
+
+        dst_pts = np.array([
+            [0, 0],
+            [400, 0],
+            [400, 400],
+            [0, 400]
+        ], dtype='float32')
+
+        matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+        aligned = cv2.warpPerspective(self.image_rgb, matrix, (400, 400))
+
+        self.image_rgb = aligned
+        self.image_label_rgb.set_numpy_image(aligned)
+        QMessageBox.information(self, "RGB Cropped", "RGB image has been cropped and aligned.")
+
+
+#"-------------------------------------TIF---------------------------------------------"
 
     def load_image(self):
         fname, _ = QFileDialog.getOpenFileName(self, 'Open TIF image', '', 'Image files (*.tif *.jpg *.png)')
         if fname:
-            self.image_path = fname
-            image_name = os.path.basename(fname)
-
-            # Carga como matriz de 1 canal (radiométrica)
             self.image_data = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
-
             if self.image_data is not None:
-                self.image_label_tif.set_numpy_image(self.image_data)  
+                self.image_tif_original = self.image_data.copy()
+                self.image_label_tif.set_numpy_image(self.image_data)
+                self.start_tif_corner_selection()  
 
-                # Normaliza y convierte a RGB solo para mostrarla (en self.image_label_tif)
-                norm_img = cv2.normalize(self.image_data, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                img_rgb = cv2.cvtColor(norm_img, cv2.COLOR_GRAY2RGB)
-                h, w = img_rgb.shape[:2]
-                qimg = QImage(img_rgb.data, w, h, 3 * w, QImage.Format_RGB888)
-                self.image_label_tif.setPixmap(QPixmap.fromImage(qimg).scaled(
-                    self.image_label_tif.size(), Qt.KeepAspectRatio))
+    def start_tif_corner_selection(self):
+        self.image_label_tif.points.clear()
+        self.image_label_tif.mode = 'corners'
 
-                self.update_emissivity_canvas()
+        def on_points(points):
+            self.image_label_tif.mode = 'adjust_corners'
+            QMessageBox.information(self, "Adjust Mode", "Now you can drag TIF corners to adjust.")
 
-    def normalize_image(self, image):
-        image = image.astype(np.float32) + 273.15  # Convert to Kelvin
-        normalized = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
-        return normalized.astype(np.uint8)
+        self.image_label_tif.callback = on_points
+        self.image_label_tif.update_display()
+        QMessageBox.information(self, "Select", "Click 4 corners on the TIF image.")
+
+    def reselect_and_adjust_tif(self):
+        if self.image_tif_original is None:
+            QMessageBox.warning(self, "Error", "Load TIF first.")
+            return
+
+        self.image_data = self.image_tif_original.copy()
+        self.image_label_tif.set_numpy_image(self.image_data, update_display=False, clear_points=False)
+
+        if len(self.tif_corners) != 4:
+            QMessageBox.warning(self, "Error", "Corners must be defined first.")
+            return
+
+        self.image_label_tif.points = self.tif_corners.copy()
+        self.image_label_tif.mode = 'adjust_corners'
+        self.image_label_tif.update_display()
+        QMessageBox.information(self, "Adjust Mode", "Drag TIF corners to adjust.")
+
+    def apply_tif_alignment(self):
+        if len(self.image_label_tif.points) != 4:
+            QMessageBox.warning(self, "Error", "Define 4 corners first.")
+            return
+
+        src_pts = np.array(self.image_label_tif.points, dtype='float32')
+        dst_pts = np.array([[0, 0], [400, 0], [400, 400], [0, 400]], dtype='float32')
+        matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+        aligned = cv2.warpPerspective(self.image_tif_original, matrix, (400, 400))
+
+        self.tif_corners = self.image_label_tif.points.copy()
+        self.image_data = aligned
+        self.image_label_tif.set_numpy_image(aligned, update_display=True, clear_points=True)
+
+        QMessageBox.information(self, "Done", "TIF image aligned with adjusted corners.")
 
     def select_corners_tif(self):
         if self.image_data is None:
@@ -400,24 +557,11 @@ class IRCorrectionApp(QMainWindow):
         self.image_label_tif.update_display()
         QMessageBox.information(self, "Select", "Click 4 corners on the TIF image.")
 
-    def select_corners_rgb(self):
-        if self.image_rgb is None:
-            QMessageBox.warning(self, "Error", "Load RGB image first.")
-            return
+##
 
-        def on_4_points(points):
-            from image_processing import warp_perspective_from_points
-            aligned = warp_perspective_from_points(self.image_rgb, points, output_size=(400, 400))
-            self.image_rgb = aligned
-            self.image_label_rgb.set_numpy_image(aligned)
-            QMessageBox.information(self, "RGB aligned", "RGB image has been aligned.")
+### Botones de rotación
 
-        self.image_label_rgb.points.clear()
-        self.image_label_rgb.expected_points = 4
-        self.image_label_rgb.mode = 'corners'
-        self.image_label_rgb.callback = on_4_points
-        self.image_label_rgb.update_display()
-        QMessageBox.information(self, "Select", "Click 4 corners on the RGB image.")
+###
 
     def rotate_tif_image(self):
         if self.image_data is not None:

@@ -198,44 +198,64 @@ class IRCorrectionApp(QMainWindow):
         self.image_label_rgb = ClickableImageLabel()
         self.image_label_rgb.setMinimumSize(300, 300)
         rgb_block = QVBoxLayout()
-        rgb_block.addWidget(QLabel("RGB"))
         rgb_block.addWidget(self.image_label_rgb)
+        label_rgb_title = QLabel("RGB")
+        label_rgb_title.setAlignment(Qt.AlignCenter)
+        label_rgb_title.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+        rgb_block.addWidget(label_rgb_title)
 
         rgb_buttons = QHBoxLayout()
-        self.btn_insert_rgb = QPushButton("Insert")
-        self.btn_select_rgb = QPushButton("Adjust")
-        self.btn_apply_rgb = QPushButton("Apply")
+        self.btn_insert_rgb = QPushButton("Insert RGB")
+        self.btn_select_rgb = QPushButton("Adjust RGB")
+        self.btn_apply_rgb = QPushButton("Apply RGB")
         self.btn_rotate_rgb = QPushButton("↻")
         rgb_buttons.addWidget(self.btn_insert_rgb)
         rgb_buttons.addWidget(self.btn_select_rgb)
         rgb_buttons.addWidget(self.btn_apply_rgb)
         rgb_buttons.addWidget(self.btn_rotate_rgb)
         rgb_block.addLayout(rgb_buttons)
+        self.btn_insert_rgb.setFixedHeight(40)
+        self.btn_select_rgb.setFixedHeight(40)
+        self.btn_apply_rgb.setFixedHeight(40)
+        self.btn_rotate_rgb.setFixedSize(30, 30)
+
 
         # ---- TIF ----
         self.image_label_tif = ClickableImageLabel()
         self.image_label_tif.setMinimumSize(300, 300)
         tif_block = QVBoxLayout()
-        tif_block.addWidget(QLabel("TIF"))
+        label_tif_title = QLabel("TIF")
+        label_tif_title.setAlignment(Qt.AlignCenter)
+        label_tif_title.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+        tif_block.addWidget(label_tif_title)
         tif_block.addWidget(self.image_label_tif)
 
         tif_buttons = QHBoxLayout()
-        self.btn_insert_tif = QPushButton("Insert")
-        self.btn_select_tif = QPushButton("Adjust")
-        self.btn_apply_tif = QPushButton("Apply")
+        self.btn_insert_tif = QPushButton("Insert TIF")
+        self.btn_select_tif = QPushButton("Adjust TIF")
+        self.btn_apply_tif = QPushButton("Apply TIF")
         self.btn_rotate_tif = QPushButton("↻")
         tif_buttons.addWidget(self.btn_insert_tif)
         tif_buttons.addWidget(self.btn_select_tif)
         tif_buttons.addWidget(self.btn_apply_tif)
         tif_buttons.addWidget(self.btn_rotate_tif)
         tif_block.addLayout(tif_buttons)
+        # Para botones principales
+        self.btn_insert_tif.setFixedHeight(40)
+        self.btn_select_tif.setFixedHeight(40)
+        self.btn_apply_tif.setFixedHeight(40)
+        # Botón de rotar más pequeño
+        self.btn_rotate_tif.setFixedSize(30, 30)
 
         # ---- SUPERPOSE ----
         self.superpose_label = QLabel()
         self.superpose_label.setMinimumSize(300, 300)
         superpose_block = QVBoxLayout()
-        superpose_block.addWidget(QLabel("Superpose"))
         superpose_block.addWidget(self.superpose_label)
+        label_superpose_title = QLabel("Superpose")
+        label_superpose_title.setAlignment(Qt.AlignCenter)
+        label_superpose_title.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+        superpose_block.addWidget(label_superpose_title)
 
         # Sliders para transparencia
         self.slider_rgb = QSlider(Qt.Horizontal)
@@ -250,6 +270,8 @@ class IRCorrectionApp(QMainWindow):
         sliders.addWidget(self.slider_rgb)
         sliders.addWidget(QLabel("TIF Transparency"))
         sliders.addWidget(self.slider_tif)
+        self.slider_rgb.setFixedWidth(300)
+        self.slider_tif.setFixedWidth(300)
 
         superpose_block.addLayout(sliders)
 
@@ -259,6 +281,12 @@ class IRCorrectionApp(QMainWindow):
         images_row.addLayout(superpose_block)
 
         ### === PARÁMETROS Y DIBUJO ===
+        params_title = QLabel("Parameters")
+        params_title.setAlignment(Qt.AlignCenter)
+        params_title.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+
+        left_column.addWidget(params_title)
+
         params_layout = QHBoxLayout()
 
         self.temp_input = QLineEdit()
@@ -294,12 +322,14 @@ class IRCorrectionApp(QMainWindow):
         self.fig = Figure(figsize=(4, 4))
         self.ax = self.fig.add_subplot(111)
         self.canvas = FigureCanvas(self.fig)
+        self.canvas.setMinimumSize(400, 400)  # cuadrada
 
         shapes_and_matrix.addLayout(shapes_box, stretch=2)
         shapes_and_matrix.addWidget(self.canvas, stretch=3)
 
         ### === ARMAR COLUMNA IZQUIERDA ===
         left_column.addLayout(images_row)
+        left_column.addWidget(params_title, alignment=Qt.AlignCenter)
         left_column.addLayout(params_layout)
         left_column.addLayout(draw_buttons)
         left_column.addLayout(shapes_and_matrix)

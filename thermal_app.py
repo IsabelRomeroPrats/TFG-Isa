@@ -194,7 +194,7 @@ class IRCorrectionApp(QMainWindow):
 
         rgb_block = QVBoxLayout()
         rgb_block.addWidget(self.image_label_rgb)
-        rgb_label = QLabel("RGB Image (for selection)")
+        rgb_label = QLabel("RGB Image for corner selection)")
         rgb_label.setAlignment(Qt.AlignCenter)
         rgb_block.addWidget(rgb_label)
 
@@ -241,11 +241,12 @@ class IRCorrectionApp(QMainWindow):
         # Temperatura
         temp_layout = QHBoxLayout()
         self.temp_input = QLineEdit()
-        self.temp_input.setPlaceholderText("Enter temperature (K)")
+        self.temp_input.setPlaceholderText("Enter temperature of shroud (K)")
         temp_layout.addWidget(QLabel("Temperature:"))
         temp_layout.addWidget(self.temp_input)
         left_layout.addLayout(temp_layout)
 
+        # Emisividad Base 
         emis_layout = QHBoxLayout()
         self.emiss_input = QLineEdit()
         self.emiss_input.setPlaceholderText("Enter base emissivity (0-1)")
@@ -291,6 +292,12 @@ class IRCorrectionApp(QMainWindow):
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
+
+        # Corrección
+        #rgb_block.addWidget(self.image_label_rgb)
+        #rgb_label = QLabel("RGB Image for corner selection)")
+        #rgb_label.setAlignment(Qt.AlignCenter)
+        #rgb_block.addWidget(rgb_label)
 
         process_button = QPushButton("Apply Correction")
         process_button.clicked.connect(self.apply_correction)
@@ -429,7 +436,7 @@ class IRCorrectionApp(QMainWindow):
 ###
 
     def update_emissivity_canvas(self):
-        matrix = self.build_emissivity_matrix()
+        matrix = self.build_emissivity_matrix(silent=True) 
         if matrix is None:
             return
 
@@ -480,11 +487,18 @@ class IRCorrectionApp(QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 shape_type = 'circle'
-
+            
         from PyQt5.QtWidgets import QInputDialog
-        emissivity, ok = QInputDialog.getDouble(self, "Emissivity", "Enter emissivity (0-1):", min=0.01, max=1.0, decimals=3)
-
+        value_str, ok = QInputDialog.getText(self, "Emissivity", "Enter emissivity (0-1):")
         if not ok:
+            return
+
+        try:
+            emissivity = float(value_str.replace(",", "."))
+            if not (0 < emissivity <= 1):
+                raise ValueError
+        except ValueError:
+            QMessageBox.warning(self, "Invalid", "Enter a valid emissivity between 0 and 1.")
             return
 
         if shape_type == 'circle':
@@ -513,7 +527,7 @@ class IRCorrectionApp(QMainWindow):
         # Función para actualizar emisividad y refrescar gráfica
         def update_emissivity():
             try:
-                value = float(emiss_input.text())
+                value = float(emiss_input.text().replace(",", "."))
                 if not (0 < value <= 1):
                     raise ValueError
                 self.image_label_rgb.shape_emissivities[shape_index] = value
@@ -608,7 +622,7 @@ class IRCorrectionApp(QMainWindow):
         return matrix
 
     def show_emissivity_matrix(self):
-        matrix = self.build_emissivity_matrix()
+        matrix = self.build_emissivity_matrix(silent=False)  
         if matrix is None:
             return
 

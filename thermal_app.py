@@ -175,197 +175,194 @@ class IRCorrectionApp(QMainWindow):
         self.image_data = None
         self.temperature = None
         self.emissivity = None
-        self.rgb_corners = []
         self.tif_corners = []
-
+        self.rgb_display_image = None  
+        self.tif_display_image = None  
         self.setup_ui()
 
     def setup_ui(self):
+
+        self.setWindowState(Qt.WindowMaximized)
+
+        ### === LAYOUT PRINCIPAL ===
         main_layout = QHBoxLayout()
-        left_layout = QVBoxLayout()
-        right_layout = QVBoxLayout()
-        left_layout.setContentsMargins(20, 10, 20, 10)  # más estrecho
-        left_layout.setSpacing(2)  # muy poco espacio vertical
 
-        # --- Dos imágenes una al lado de otra ---
-        image_container = QHBoxLayout()
+        # Dos columnas principales
+        left_column = QVBoxLayout()
+        right_column = QVBoxLayout()
 
-        # Etiqueta .tif (solo visualización)
-        self.image_label_tif = ClickableImageLabel()
-        self.image_label_tif.setMinimumSize(350, 350)
-        self.image_label_tif.setAlignment(Qt.AlignCenter)
+        ### === FILA SUPERIOR: RGB + TIF + SUPERPOSE ===
+        images_row = QHBoxLayout()
 
-        # Contenedor con imagen y título
-        tif_block = QVBoxLayout()
-        tif_block.addWidget(self.image_label_tif)
-        tif_label = QLabel("Thermal Image (.tif)")
-        tif_label.setAlignment(Qt.AlignCenter)
-        tif_block.addWidget(tif_label)
-
-        # Etiqueta RGB (selección activa)
+        # ---- RGB ----
         self.image_label_rgb = ClickableImageLabel()
-        self.image_label_rgb.setMinimumSize(350, 350)
-        self.image_label_rgb.canvas_callback = self.update_emissivity_canvas
-
+        self.image_label_rgb.setMinimumSize(300, 300)
         rgb_block = QVBoxLayout()
+        rgb_block.addWidget(QLabel("RGB"))
         rgb_block.addWidget(self.image_label_rgb)
-        rgb_label = QLabel("RGB Image for corner selection)")
-        rgb_label.setAlignment(Qt.AlignCenter)
-        rgb_block.addWidget(rgb_label)
 
-        # Añadir ambos bloques al contenedor horizontal
-        image_container.addLayout(tif_block)
-        image_container.addLayout(rgb_block)
+        rgb_buttons = QHBoxLayout()
+        self.btn_insert_rgb = QPushButton("Insert")
+        self.btn_select_rgb = QPushButton("Adjust")
+        self.btn_apply_rgb = QPushButton("Apply")
+        self.btn_rotate_rgb = QPushButton("↻")
+        rgb_buttons.addWidget(self.btn_insert_rgb)
+        rgb_buttons.addWidget(self.btn_select_rgb)
+        rgb_buttons.addWidget(self.btn_apply_rgb)
+        rgb_buttons.addWidget(self.btn_rotate_rgb)
+        rgb_block.addLayout(rgb_buttons)
 
-        left_layout.addLayout(image_container)
+        # ---- TIF ----
+        self.image_label_tif = ClickableImageLabel()
+        self.image_label_tif.setMinimumSize(300, 300)
+        tif_block = QVBoxLayout()
+        tif_block.addWidget(QLabel("TIF"))
+        tif_block.addWidget(self.image_label_tif)
 
-        # Botones de inserción, corner y rotar
-        button_grid = QGridLayout()
+        tif_buttons = QHBoxLayout()
+        self.btn_insert_tif = QPushButton("Insert")
+        self.btn_select_tif = QPushButton("Adjust")
+        self.btn_apply_tif = QPushButton("Apply")
+        self.btn_rotate_tif = QPushButton("↻")
+        tif_buttons.addWidget(self.btn_insert_tif)
+        tif_buttons.addWidget(self.btn_select_tif)
+        tif_buttons.addWidget(self.btn_apply_tif)
+        tif_buttons.addWidget(self.btn_rotate_tif)
+        tif_block.addLayout(tif_buttons)
 
-        btn_insert_tif = QPushButton("Insert TIF")
-        btn_insert_rgb = QPushButton("Insert RGB")
-        btn_insert_tif.clicked.connect(self.load_image)
-        btn_insert_rgb.clicked.connect(self.load_rgb_image)
-        button_grid.addWidget(btn_insert_tif, 0, 0)
-        button_grid.addWidget(btn_insert_rgb, 0, 1)
+        # ---- SUPERPOSE ----
+        self.superpose_label = QLabel()
+        self.superpose_label.setMinimumSize(300, 300)
+        superpose_block = QVBoxLayout()
+        superpose_block.addWidget(QLabel("Superpose"))
+        superpose_block.addWidget(self.superpose_label)
 
-        left_layout.addLayout(button_grid)
+        # Sliders para transparencia
+        self.slider_rgb = QSlider(Qt.Horizontal)
+        self.slider_rgb.setRange(0, 100)
+        self.slider_rgb.setValue(50)
+        self.slider_tif = QSlider(Qt.Horizontal)
+        self.slider_tif.setRange(0, 100)
+        self.slider_tif.setValue(50)
 
-        corners_row = QHBoxLayout()
+        sliders = QVBoxLayout()
+        sliders.addWidget(QLabel("RGB Transparency"))
+        sliders.addWidget(self.slider_rgb)
+        sliders.addWidget(QLabel("TIF Transparency"))
+        sliders.addWidget(self.slider_tif)
 
-        # --- TIF ---
+        superpose_block.addLayout(sliders)
 
-        btn_reselect_tif = QPushButton("Re-select & Adjust TIF")
-        btn_apply_tif = QPushButton("Apply TIF Alignment")
-        btn_rotate_tif = QPushButton("↻")
-        btn_rotate_tif.setFixedWidth(30)
+        # Añadir bloques a la fila superior
+        images_row.addLayout(rgb_block)
+        images_row.addLayout(tif_block)
+        images_row.addLayout(superpose_block)
 
-        btn_reselect_tif.clicked.connect(self.reselect_and_adjust_tif)
-        btn_apply_tif.clicked.connect(self.apply_tif_alignment)
-        btn_rotate_tif.clicked.connect(self.rotate_tif_image)
+        ### === PARÁMETROS Y DIBUJO ===
+        params_layout = QHBoxLayout()
 
-        corners_row.addWidget(btn_reselect_tif)
-        corners_row.addWidget(btn_apply_tif)
-        corners_row.addWidget(btn_rotate_tif)
-
-        # --- RGB ---
-        btn_reselect_rgb = QPushButton("Re-select & Adjust Corners RGB")
-        btn_apply_rgb = QPushButton("Apply RGB Alignment")
-        btn_rotate_rgb = QPushButton("↻")
-        btn_rotate_rgb.setFixedWidth(30)
-
-        btn_reselect_rgb.clicked.connect(self.reselect_and_adjust_rgb)
-        btn_apply_rgb.clicked.connect(self.apply_rgb_alignment)
-        btn_rotate_rgb.clicked.connect(self.rotate_rgb_image)
-
-        corners_row.addWidget(btn_reselect_rgb)
-        corners_row.addWidget(btn_apply_rgb)
-        corners_row.addWidget(btn_rotate_rgb)
-
-        left_layout.addLayout(corners_row)
-
-
-        # Temperatura
-        temp_layout = QHBoxLayout()
         self.temp_input = QLineEdit()
-        self.temp_input.setPlaceholderText("Enter temperature of shroud (K)")
-        temp_layout.addWidget(QLabel("Temperature:"))
-        temp_layout.addWidget(self.temp_input)
-        left_layout.addLayout(temp_layout)
+        self.temp_input.setPlaceholderText("Temperature")
 
-        # Emisividad Base 
-        emis_layout = QHBoxLayout()
         self.emiss_input = QLineEdit()
-        self.emiss_input.setPlaceholderText("Enter base emissivity (0-1)")
-        self.emiss_input.editingFinished.connect(self.update_emissivity_canvas)
-        emis_layout.addWidget(QLabel("Emissivity:"))
-        emis_layout.addWidget(self.emiss_input)
-        left_layout.addLayout(emis_layout)
+        self.emiss_input.setPlaceholderText("Emissivity")
 
-        # Sección de título Emissivity Shape
-        emis_title = QLabel("Add Emissivity Shape")
-        emis_title.setAlignment(Qt.AlignCenter)
-        emis_title.setStyleSheet("font-weight: bold; font-size: 8pt; margin-top: 10px;")
-        left_layout.addWidget(emis_title)
-        # Botón: Iniciar forma
-        self.start_button = QPushButton("Start Drawing Shape")
-        self.start_button.clicked.connect(self.start_shape)
-        left_layout.addWidget(self.start_button)
-        # Botón: Terminar forma
-        self.finish_button = QPushButton("Finish Shape")
-        self.finish_button.clicked.connect(self.finish_shape)
-        left_layout.addWidget(self.finish_button)
-
-        tau_layout = QHBoxLayout()
         self.tau_input = QLineEdit()
-        self.tau_input.setPlaceholderText("Enter tau for crystal (0-1)")
-        emis_layout.addWidget(QLabel("Tau:"))
-        emis_layout.addWidget(self.tau_input)
-        left_layout.addLayout(tau_layout)
+        self.tau_input.setPlaceholderText("Tau")
 
-        # Contenedor para editar emisividades
+        params_layout.addWidget(QLabel("Temperature:"))
+        params_layout.addWidget(self.temp_input)
+        params_layout.addWidget(QLabel("Emissivity:"))
+        params_layout.addWidget(self.emiss_input)
+        params_layout.addWidget(QLabel("Tau:"))
+        params_layout.addWidget(self.tau_input)
+
+        draw_buttons = QHBoxLayout()
+        self.start_button = QPushButton("Start Draw")
+        self.finish_button = QPushButton("End Draw")
+        draw_buttons.addWidget(self.start_button)
+        draw_buttons.addWidget(self.finish_button)
+
+        ### === FIGURE LISTA (SHAPES) + EMISSIVITY MATRIX ===
+        shapes_and_matrix = QHBoxLayout()
+
+        shapes_box = QVBoxLayout()
+        shapes_box.addWidget(QLabel("Shapes:"))
         self.shapes_layout = QVBoxLayout()
-        self.shapes_layout.setSpacing(3)
-        left_layout.addLayout(self.shapes_layout)
+        shapes_box.addLayout(self.shapes_layout)
 
-        self.fig = Figure(figsize=(5, 5))
+        self.fig = Figure(figsize=(4, 4))
         self.ax = self.fig.add_subplot(111)
         self.canvas = FigureCanvas(self.fig)
-        right_layout.addWidget(self.canvas)
 
-        main_layout.addLayout(left_layout, stretch=2)
-        main_layout.addLayout(right_layout, stretch=1)
+        shapes_and_matrix.addLayout(shapes_box, stretch=2)
+        shapes_and_matrix.addWidget(self.canvas, stretch=3)
+
+        ### === ARMAR COLUMNA IZQUIERDA ===
+        left_column.addLayout(images_row)
+        left_column.addLayout(params_layout)
+        left_column.addLayout(draw_buttons)
+        left_column.addLayout(shapes_and_matrix)
+
+        ### === COLUMNA DERECHA: CORRECCIÓN Y RESULTADOS ===
+        self.btn_add_model = QPushButton("Add Correction Model")
+        self.model_label = QLabel("Correction Model")
+        self.model_label.setMinimumSize(200, 200)
+        self.model_label.setAlignment(Qt.AlignCenter)
+
+        self.btn_apply_corr = QPushButton("Apply Correction")
+        self.result_fig1 = QLabel("Fig 1 Placeholder")
+        self.result_fig1.setMinimumSize(200, 200)
+        self.result_fig1.setAlignment(Qt.AlignCenter)
+
+        self.result_fig2 = QLabel("Fig 2 Placeholder")
+        self.result_fig2.setMinimumSize(200, 200)
+        self.result_fig2.setAlignment(Qt.AlignCenter)
+
+        right_column.addWidget(self.btn_add_model)
+        right_column.addWidget(self.model_label)
+        right_column.addWidget(self.btn_apply_corr)
+        right_column.addWidget(self.result_fig1)
+        right_column.addWidget(self.result_fig2)
+
+        ### === MONTAR T===
+        main_layout.addLayout(left_column, stretch=3)
+        main_layout.addLayout(right_column, stretch=1)
 
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # Corrección
-        #rgb_block.addWidget(self.image_label_rgb)
-        #rgb_label = QLabel("RGB Image for corner selection)")
-        #rgb_label.setAlignment(Qt.AlignCenter)
-        #rgb_block.addWidget(rgb_label)
-
-        process_button = QPushButton("Apply Correction")
-        process_button.clicked.connect(self.apply_correction)
-        left_layout.addWidget(process_button)
-
-        # Crear una figura para la matriz de emisividad
-        self.fig = Figure(figsize=(4, 4))
-        self.ax = self.fig.add_subplot(111)
-        self.canvas = FigureCanvas(self.fig)
-        self.canvas.setMinimumWidth(400)
-
-        # Insertar al principio del layout (posición 0)
-        right_layout.insertWidget(0, self.canvas)
-
-        # Actualizar al modificar formas
-        self.image_label_rgb.canvas_callback = self.update_emissivity_canvas
-
-        superpose_layout = QVBoxLayout()
-
-        self.superpose_label = QLabel()
-        self.superpose_label.setMinimumSize(400, 400)
-        self.superpose_label.setAlignment(Qt.AlignCenter)
-        superpose_layout.addWidget(self.superpose_label)
-
-        self.slider_rgb = QSlider(Qt.Horizontal)
-        self.slider_rgb.setRange(0, 100)
-        self.slider_rgb.setValue(50)
-
-        self.slider_tif = QSlider(Qt.Horizontal)
-        self.slider_tif.setRange(0, 100)
-        self.slider_tif.setValue(50)
-
-        superpose_layout.addWidget(QLabel("RGB Transparency"))
-        superpose_layout.addWidget(self.slider_rgb)
-        superpose_layout.addWidget(QLabel("TIF Transparency"))
-        superpose_layout.addWidget(self.slider_tif)
-
+        ### === CONECTAR SLIDERS ===
         self.slider_rgb.valueChanged.connect(self.update_superpose)
         self.slider_tif.valueChanged.connect(self.update_superpose)
 
-        right_layout.addLayout(superpose_layout)
+        # === CONEXIONES PARA TODOS LOS BOTONES Y SLIDERS ===
+
+        # Botones RGB
+        self.btn_insert_rgb.clicked.connect(self.load_rgb_image)
+        self.btn_select_rgb.clicked.connect(self.reselect_and_adjust_rgb)
+        self.btn_apply_rgb.clicked.connect(self.apply_rgb_alignment)
+        self.btn_rotate_rgb.clicked.connect(self.rotate_rgb_image)
+
+        # Botones TIF
+        self.btn_insert_tif.clicked.connect(self.load_image)
+        self.btn_select_tif.clicked.connect(self.reselect_and_adjust_tif)
+        self.btn_apply_tif.clicked.connect(self.apply_tif_alignment)
+        self.btn_rotate_tif.clicked.connect(self.rotate_tif_image)
+
+        # Sliders de transparencia
+        self.slider_rgb.valueChanged.connect(self.update_superpose)
+        self.slider_tif.valueChanged.connect(self.update_superpose)
+
+        # Botones para shapes
+        self.start_button.clicked.connect(self.start_shape)
+        self.finish_button.clicked.connect(self.finish_shape)
+
+        # Corrección
+        self.btn_apply_corr.clicked.connect(self.apply_correction)
+        # Si tienes un método para añadir el modelo de corrección:
+        # self.btn_add_model.clicked.connect(self.load_correction_model)
 
 ###
 
@@ -376,16 +373,24 @@ class IRCorrectionApp(QMainWindow):
 #"-------------------------------------RGB---------------------------------------------"
 
     def load_rgb_image(self):
-        fname, _ = QFileDialog.getOpenFileName(self, 'Open RGB image', '', 'Image files (*.jpg *.png *.bmp)')
-        if fname:
-            image = cv2.imread(fname)
-        if image is not None:
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            self.image_rgb_original = image_rgb.copy()
-            self.image_rgb = image_rgb.copy()
-            self.image_label_rgb.set_numpy_image(self.image_rgb)
-            self.update_emissivity_canvas()
-            self.start_corner_selection()  
+        fname, _ = QFileDialog.getOpenFileName(
+            self, 'Open RGB image', '', 'Image files (*.jpg *.png *.bmp)'
+        )
+        if not fname:
+            return
+
+        image = cv2.imread(fname)
+        if image is None:
+            QMessageBox.warning(self, "Error", "Could not load image.")
+            return
+
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        self.image_rgb_original = image_rgb.copy()
+        self.image_rgb = image_rgb.copy()
+        self.rgb_display_image = image_rgb.copy()  # ⚡️ Guardar SIEMPRE buffer display!
+        self.image_label_rgb.set_numpy_image(self.rgb_display_image)
+        self.update_emissivity_canvas()
+        self.start_corner_selection()
 
     def start_corner_selection(self):
         self.image_label_rgb.points.clear()
@@ -429,7 +434,8 @@ class IRCorrectionApp(QMainWindow):
         aligned = cv2.warpPerspective(self.image_rgb_original, matrix, (400, 400))
 
         self.image_rgb = aligned
-        self.image_label_rgb.set_numpy_image(aligned)
+        self.rgb_display_image = aligned.copy()  # ⚡️ actualiza buffer display
+        self.image_label_rgb.set_numpy_image(self.rgb_display_image)
         self.update_superpose()
 
         QMessageBox.information(self, "Alignment Done", "RGB image aligned with adjusted corners.")
@@ -500,8 +506,11 @@ class IRCorrectionApp(QMainWindow):
             self.image_data = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
             if self.image_data is not None:
                 self.image_tif_original = self.image_data.copy()
-                self.image_label_tif.set_numpy_image(self.image_data)
-                self.start_tif_corner_selection()  
+                # Normaliza para display
+                aligned_norm = cv2.normalize(self.image_data, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                self.tif_display_image = aligned_norm.copy()  # ⚡️ buffer display
+                self.image_label_tif.set_numpy_image(self.tif_display_image)
+                self.start_tif_corner_selection()
 
     def start_tif_corner_selection(self):
         self.image_label_tif.points.clear()
@@ -539,51 +548,32 @@ class IRCorrectionApp(QMainWindow):
 
         src_pts = np.array(self.image_label_tif.points, dtype='float32')
         dst_pts = np.array([[0, 0], [400, 0], [400, 400], [0, 400]], dtype='float32')
+
         matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
         aligned = cv2.warpPerspective(self.image_tif_original, matrix, (400, 400))
 
         self.tif_corners = self.image_label_tif.points.copy()
-        self.image_data = aligned
-        self.image_label_tif.set_numpy_image(aligned, update_display=True, clear_points=True)
+        self.image_data = aligned  # radiométrico original
+        aligned_norm = cv2.normalize(aligned, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        self.tif_display_image = aligned_norm.copy()  # ⚡️ buffer display actualizado
+        self.image_label_tif.set_numpy_image(self.tif_display_image)
         self.update_superpose()
 
         QMessageBox.information(self, "Done", "TIF image aligned with adjusted corners.")
 
-    def select_corners_tif(self):
-        if self.image_data is None:
-            QMessageBox.warning(self, "Error", "Load TIF image first.")
-            return
-
-        def on_4_points(points):
-            from image_processing import warp_perspective_from_points
-            aligned = warp_perspective_from_points(self.image_data, points, output_size=(400, 400))
-            self.image_data = aligned
-
-            # Guardar la imagen en el label SIN forzar visualización
-            self.image_label_tif.set_numpy_image(aligned, update_display=False)
-
-            # Visualizar normalizado
-            vmin = np.percentile(aligned, 1)
-            vmax = np.percentile(aligned, 99)
-            aligned_clipped = np.clip(aligned, vmin, vmax)
-            aligned_norm = ((aligned_clipped - vmin) / (vmax - vmin) * 255).astype(np.uint8)
-            img_rgb = cv2.cvtColor(aligned_norm, cv2.COLOR_GRAY2RGB)
-
-            h, w = img_rgb.shape[:2]
-            qimg = QImage(img_rgb.data, w, h, 3 * w, QImage.Format_RGB888)
-            self.image_label_tif.setPixmap(QPixmap.fromImage(qimg).scaled(
-                self.image_label_tif.size(), Qt.KeepAspectRatio))
-
-            # Deshabilitar la imagen para evitar clics por error
-            self.image_label_tif.setEnabled(False)
-            QMessageBox.information(self, "TIF aligned", "TIF image has been aligned.")
-
+    def start_tif_corner_selection(self):
         self.image_label_tif.points.clear()
-        self.image_label_tif.expected_points = 4
         self.image_label_tif.mode = 'corners'
-        self.image_label_tif.callback = on_4_points
+
+        def on_points(points):
+            self.tif_corners = points.copy()  # GUARDA!
+            self.image_label_tif.mode = 'adjust_corners'
+            QMessageBox.information(self, "Adjust Mode", "Now you can drag TIF corners to adjust.")
+
+        self.image_label_tif.callback = on_points
         self.image_label_tif.update_display()
         QMessageBox.information(self, "Select", "Click 4 corners on the TIF image.")
+
 
 ##
 
@@ -594,12 +584,17 @@ class IRCorrectionApp(QMainWindow):
     def rotate_tif_image(self):
         if self.image_data is not None:
             self.image_data = cv2.rotate(self.image_data, cv2.ROTATE_90_CLOCKWISE)
-            self.image_label_tif.set_numpy_image(self.image_data)
+            aligned_norm = cv2.normalize(self.image_data, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            self.tif_display_image = aligned_norm.copy()  # ⚡️ actualiza display buffer!
+            self.image_label_tif.set_numpy_image(self.tif_display_image)
+            self.update_superpose()
 
     def rotate_rgb_image(self):
         if self.image_rgb is not None:
             self.image_rgb = cv2.rotate(self.image_rgb, cv2.ROTATE_90_CLOCKWISE)
-            self.image_label_rgb.set_numpy_image(self.image_rgb)
+            self.rgb_display_image = self.image_rgb.copy()  
+            self.image_label_rgb.set_numpy_image(self.rgb_display_image)
+            self.update_superpose()
 
 
 ###☺
@@ -609,24 +604,22 @@ class IRCorrectionApp(QMainWindow):
 ###
 
     def update_superpose(self):
-        if self.image_rgb is None or self.image_data is None:
+        if self.rgb_display_image is None or self.tif_display_image is None:
             return
 
-        rgb = self.image_rgb.copy()
-        tif = self.image_data.copy()
+        rgb = self.rgb_display_image.copy()
+        tif = self.tif_display_image.copy()
 
-        # Convert both to BGR for blending
-        if len(rgb.shape) == 3:
-            rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        else:
+        if rgb.ndim == 2:
             rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_GRAY2BGR)
+        else:
+            rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-        if len(tif.shape) == 2:
+        if tif.ndim == 2:
             tif_bgr = cv2.cvtColor(tif, cv2.COLOR_GRAY2BGR)
         else:
-            tif_bgr = tif.copy()
+            tif_bgr = cv2.cvtColor(tif, cv2.COLOR_RGB2BGR)
 
-        # Resize to match
         if tif_bgr.shape[:2] != rgb_bgr.shape[:2]:
             tif_bgr = cv2.resize(tif_bgr, (rgb_bgr.shape[1], rgb_bgr.shape[0]))
 
@@ -889,8 +882,8 @@ class IRCorrectionApp(QMainWindow):
             QMessageBox.information(self, "Correction Created", "New correction file generated.")
 
 
+if __name__ == "__main__":
 
-if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = IRCorrectionApp()
     window.show()

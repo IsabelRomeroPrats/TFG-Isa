@@ -346,14 +346,6 @@ class IRCorrectionApp(QMainWindow):
 
         left_column.addLayout(shapes_and_matrix)
 
-
-        ### === ARMAR COLUMNA IZQUIERDA ===
-        left_column.addLayout(images_row)
-        left_column.addWidget(params_title, alignment=Qt.AlignCenter)
-        left_column.addLayout(params_layout)
-        left_column.addLayout(draw_buttons)
-        left_column.addLayout(shapes_and_matrix)
-
         ### === COLUMNA DERECHA: CORRECCIÓN Y RESULTADOS ===
         self.btn_add_model = QPushButton("Add Correction Model")
         self.model_label = QLabel("Correction Model")

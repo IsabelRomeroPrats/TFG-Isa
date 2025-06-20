@@ -194,15 +194,32 @@ class IRCorrectionApp(QMainWindow):
         ### === FILA SUPERIOR: RGB + TIF + SUPERPOSE ===
         images_row = QHBoxLayout()
 
+        # === TITLES ROW ===
+        titles_row = QHBoxLayout()
+
+        label_rgb_title = QLabel("RGB")
+        label_rgb_title.setAlignment(Qt.AlignCenter)
+        label_rgb_title.setStyleSheet("font-weight: bold;")
+
+        label_tif_title = QLabel("TIF")
+        label_tif_title.setAlignment(Qt.AlignCenter)
+        label_tif_title.setStyleSheet("font-weight: bold;")
+
+        label_superpose_title = QLabel("Superpose")
+        label_superpose_title.setAlignment(Qt.AlignCenter)
+        label_superpose_title.setStyleSheet("font-weight: bold;")
+
+        titles_row.addWidget(label_rgb_title)
+        titles_row.addWidget(label_tif_title)
+        titles_row.addWidget(label_superpose_title)
+
         # ---- RGB ----
         self.image_label_rgb = ClickableImageLabel()
         self.image_label_rgb.setMinimumSize(300, 300)
         rgb_block = QVBoxLayout()
         rgb_block.addWidget(self.image_label_rgb)
-        label_rgb_title = QLabel("RGB")
-        label_rgb_title.setAlignment(Qt.AlignCenter)
-        label_rgb_title.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
-        rgb_block.addWidget(label_rgb_title)
+
+
 
         rgb_buttons = QHBoxLayout()
         self.btn_insert_rgb = QPushButton("Insert RGB")
@@ -224,10 +241,7 @@ class IRCorrectionApp(QMainWindow):
         self.image_label_tif = ClickableImageLabel()
         self.image_label_tif.setMinimumSize(300, 300)
         tif_block = QVBoxLayout()
-        label_tif_title = QLabel("TIF")
-        label_tif_title.setAlignment(Qt.AlignCenter)
-        label_tif_title.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
-        tif_block.addWidget(label_tif_title)
+    
         tif_block.addWidget(self.image_label_tif)
 
         tif_buttons = QHBoxLayout()
@@ -252,10 +266,7 @@ class IRCorrectionApp(QMainWindow):
         self.superpose_label.setMinimumSize(300, 300)
         superpose_block = QVBoxLayout()
         superpose_block.addWidget(self.superpose_label)
-        label_superpose_title = QLabel("Superpose")
-        label_superpose_title.setAlignment(Qt.AlignCenter)
-        label_superpose_title.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
-        superpose_block.addWidget(label_superpose_title)
+
 
         # Sliders para transparencia
         self.slider_rgb = QSlider(Qt.Horizontal)
@@ -281,20 +292,22 @@ class IRCorrectionApp(QMainWindow):
         images_row.addLayout(superpose_block)
 
         ### === PARÁMETROS Y DIBUJO ===
+        # === TITLES arriba ===
+        left_column.addLayout(titles_row)
+        left_column.addLayout(images_row)
+
+        # --- Título Parameters ---
         params_title = QLabel("Parameters")
         params_title.setAlignment(Qt.AlignCenter)
         params_title.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
-
         left_column.addWidget(params_title)
 
+        # --- Bloque de entradas ---
         params_layout = QHBoxLayout()
-
         self.temp_input = QLineEdit()
         self.temp_input.setPlaceholderText("Temperature")
-
         self.emiss_input = QLineEdit()
         self.emiss_input.setPlaceholderText("Emissivity")
-
         self.tau_input = QLineEdit()
         self.tau_input.setPlaceholderText("Tau")
 
@@ -305,13 +318,17 @@ class IRCorrectionApp(QMainWindow):
         params_layout.addWidget(QLabel("Tau:"))
         params_layout.addWidget(self.tau_input)
 
+        left_column.addLayout(params_layout)
+
+        # --- Botones Draw ---
         draw_buttons = QHBoxLayout()
         self.start_button = QPushButton("Start Draw")
         self.finish_button = QPushButton("End Draw")
         draw_buttons.addWidget(self.start_button)
         draw_buttons.addWidget(self.finish_button)
+        left_column.addLayout(draw_buttons)
 
-        ### === FIGURE LISTA (SHAPES) + EMISSIVITY MATRIX ===
+        # --- Shapes y Emissivity Matrix ---
         shapes_and_matrix = QHBoxLayout()
 
         shapes_box = QVBoxLayout()
@@ -326,6 +343,9 @@ class IRCorrectionApp(QMainWindow):
 
         shapes_and_matrix.addLayout(shapes_box, stretch=2)
         shapes_and_matrix.addWidget(self.canvas, stretch=3)
+
+        left_column.addLayout(shapes_and_matrix)
+
 
         ### === ARMAR COLUMNA IZQUIERDA ===
         left_column.addLayout(images_row)

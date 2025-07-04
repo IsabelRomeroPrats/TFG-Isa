@@ -47,7 +47,6 @@ class ClickableImageLabel(QLabel):
         if self.canvas_callback:
             self.canvas_callback()
 
-
     def mousePressEvent(self, event):
         if self.image_np is None or self.pixmap() is None:
             return
@@ -73,18 +72,18 @@ class ClickableImageLabel(QLabel):
         x_real = int(x_rel * img_w)
         y_real = int(y_rel * img_h)
 
-        # Si estoy ajustando, comprobar si clico cerca de un punto existente
-        if self.mode == 'adjust_corners' and self.points:
+        # Si estoy ajustando (adjust_corners o polygon) → intentar drag
+        if self.mode in ['adjust_corners', 'polygon'] and self.points:
             for i, (px, py) in enumerate(self.points):
                 if abs(px - x_real) < 15 and abs(py - y_real) < 15:
                     self.dragging_point = i
                     return
 
-        # Si estoy en modo corners, añadir puntos normalmente
-        if self.mode == 'corners':
+        # Si estoy en modo corners o polygon → añadir punto nuevo
+        if self.mode in ['corners', 'polygon']:
             self.points.append((x_real, y_real))
             self.update_display()
-            if len(self.points) == self.expected_points:
+            if self.mode == 'corners' and len(self.points) == self.expected_points:
                 if self.callback:
                     self.callback(self.points)
 
@@ -146,8 +145,7 @@ class ClickableImageLabel(QLabel):
 
         # Dibuja puntos
         for pt in self.points:
-            cv2.circle(img_display, pt, 6, (0, 0, 255), -1)
-
+                cv2.circle(img_display, pt, 6, (0, 255, 0), -1)
         h, w = img_display.shape[:2]
         qimg = QImage(img_display.data, w, h, 3 * w, QImage.Format_RGB888)
         self.setPixmap(QPixmap.fromImage(qimg).scaled(self.size(), Qt.KeepAspectRatio))
@@ -178,6 +176,7 @@ class IRCorrectionApp(QMainWindow):
         self.tif_corners = []
         self.rgb_display_image = None  
         self.tif_display_image = None  
+        self.editing_shape_index = None  
         self.setup_ui()
 
     def setup_ui(self):
@@ -307,6 +306,7 @@ class IRCorrectionApp(QMainWindow):
         self.temp_input = QLineEdit()
         self.temp_input.setPlaceholderText("Temperature")
         self.emiss_input = QLineEdit()
+        self.emiss_input.editingFinished.connect(self.update_emissivity_canvas)
         self.emiss_input.setPlaceholderText("Emissivity")
         self.tau_input = QLineEdit()
         self.tau_input.setPlaceholderText("Tau")
@@ -548,11 +548,18 @@ class IRCorrectionApp(QMainWindow):
             self.image_data = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
             if self.image_data is not None:
                 self.image_tif_original = self.image_data.copy()
-                # Normaliza para display
-                aligned_norm = cv2.normalize(self.image_data, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                self.tif_display_image = aligned_norm.copy()  # ⚡️ buffer display
+
+                self.tif_display_image = self.generate_colored_tif_display(self.image_data)
+
                 self.image_label_tif.set_numpy_image(self.tif_display_image)
                 self.start_tif_corner_selection()
+
+    def generate_colored_tif_display(self, image_data):
+        aligned_norm = cv2.normalize(image_data, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        colored = cv2.applyColorMap(aligned_norm, cv2.COLORMAP_JET)
+        colored_rgb = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
+        return colored_rgb
+
 
     def start_tif_corner_selection(self):
         self.image_label_tif.points.clear()
@@ -596,8 +603,7 @@ class IRCorrectionApp(QMainWindow):
 
         self.tif_corners = self.image_label_tif.points.copy()
         self.image_data = aligned  # radiométrico original
-        aligned_norm = cv2.normalize(aligned, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        self.tif_display_image = aligned_norm.copy()  # ⚡️ buffer display actualizado
+        self.tif_display_image = self.generate_colored_tif_display(aligned)
         self.image_label_tif.set_numpy_image(self.tif_display_image)
         self.update_superpose()
 
@@ -626,8 +632,7 @@ class IRCorrectionApp(QMainWindow):
     def rotate_tif_image(self):
         if self.image_data is not None:
             self.image_data = cv2.rotate(self.image_data, cv2.ROTATE_90_CLOCKWISE)
-            aligned_norm = cv2.normalize(self.image_data, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            self.tif_display_image = aligned_norm.copy()  # ⚡️ actualiza display buffer!
+            self.tif_display_image = self.generate_colored_tif_display(self.image_data)
             self.image_label_tif.set_numpy_image(self.tif_display_image)
             self.update_superpose()
 
@@ -715,9 +720,11 @@ class IRCorrectionApp(QMainWindow):
     def start_shape(self):
         self.image_label_rgb.points.clear()
         self.image_label_rgb.mode = 'polygon'
-        self.image_label_rgb.expected_points = 9999  # número indefinido
+        self.image_label_rgb.expected_points = 9999
+        self.image_label_rgb.callback = None
+        self.editing_shape_index = None  
         self.image_label_rgb.update_display()
-        QMessageBox.information(self, "Shape Mode", "Click to add points. Then click 'Finish Shape'.")
+        QMessageBox.information(self, "Shape Mode", "Click to add points. Then click 'End Draw' to save the shape.")
 
     def finish_shape(self):
         points = self.image_label_rgb.points.copy()
@@ -727,7 +734,6 @@ class IRCorrectionApp(QMainWindow):
             return
 
         shape_type = 'triangle' if len(points) == 3 else 'polygon'
-
         if len(points) == 5:
             reply = QMessageBox.question(
                 self, "Shape Type",
@@ -736,12 +742,12 @@ class IRCorrectionApp(QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 shape_type = 'circle'
-            
+
+        # Pide nueva emisividad
         from PyQt5.QtWidgets import QInputDialog
         value_str, ok = QInputDialog.getText(self, "Emissivity", "Enter emissivity (0-1):")
         if not ok:
             return
-
         try:
             emissivity = float(value_str.replace(",", "."))
             if not (0 < emissivity <= 1):
@@ -750,18 +756,26 @@ class IRCorrectionApp(QMainWindow):
             QMessageBox.warning(self, "Invalid", "Enter a valid emissivity between 0 and 1.")
             return
 
+        # Calcula datos
         if shape_type == 'circle':
             pts = np.array(points, dtype=np.float32)
             (cx, cy), radius = cv2.minEnclosingCircle(pts)
-            self.image_label_rgb.shapes.append(('circle', ((int(cx), int(cy)), int(radius))))
+            shape_data = ('circle', ((int(cx), int(cy)), int(radius)))
         else:
-            self.image_label_rgb.shapes.append(('polygon', points))
+            shape_data = (shape_type, points)
 
-        self.image_label_rgb.shape_emissivities.append(emissivity)
+        # 🔑 Reemplaza o agrega nuevo
+        if self.editing_shape_index is not None:
+            self.image_label_rgb.shapes[self.editing_shape_index] = shape_data
+            self.image_label_rgb.shape_emissivities[self.editing_shape_index] = emissivity
+        else:
+            self.image_label_rgb.shapes.append(shape_data)
+            self.image_label_rgb.shape_emissivities.append(emissivity)
+
         self.image_label_rgb.points.clear()
+        self.editing_shape_index = None  # reset edición
         self.image_label_rgb.update_display()
-        shape_type_label = shape_type.capitalize()
-        self.add_shape_entry(len(self.image_label_rgb.shapes) - 1, shape_type_label, emissivity)
+        self.refresh_shape_entries()
         self.update_emissivity_canvas()
 
     def add_shape_entry(self, shape_index, shape_type, current_emissivity):
@@ -773,13 +787,16 @@ class IRCorrectionApp(QMainWindow):
         emiss_input.setText(f"{current_emissivity:.3f}")
         emiss_input.setFixedWidth(60)
 
-        # Función para actualizar emisividad y refrescar gráfica
         def update_emissivity():
+            # 🔑 usa siempre el índice actual calculado en runtime
+            idx = self.shapes_layout.indexOf(layout)
+            if idx < 0 or idx >= len(self.image_label_rgb.shape_emissivities):
+                return  # Safety
             try:
                 value = float(emiss_input.text().replace(",", "."))
                 if not (0 < value <= 1):
                     raise ValueError
-                self.image_label_rgb.shape_emissivities[shape_index] = value
+                self.image_label_rgb.shape_emissivities[idx] = value
                 self.image_label_rgb.update_display()
                 self.update_emissivity_canvas()
             except ValueError:
@@ -787,7 +804,27 @@ class IRCorrectionApp(QMainWindow):
 
         emiss_input.editingFinished.connect(update_emissivity)
 
-        # Botón pequeño para borrar
+        # Botón ✎ para re-editar forma
+        edit_btn = QPushButton("✎")
+        edit_btn.setFixedWidth(30)
+
+        def edit_shape():
+            if shape_index < len(self.image_label_rgb.shapes):
+                tipo, datos = self.image_label_rgb.shapes[shape_index]
+                if tipo == 'circle':
+                    QMessageBox.information(self, "Info", "Editing circles is not yet supported.")
+                    return
+                self.image_label_rgb.points = datos.copy()
+                self.image_label_rgb.mode = 'polygon'
+                self.image_label_rgb.expected_points = 9999
+                self.image_label_rgb.callback = None
+                self.editing_shape_index = shape_index 
+                self.image_label_rgb.update_display()
+                QMessageBox.information(self, "Edit Mode", "Drag or click to adjust points. Then click 'End Draw' to save changes.")
+
+        edit_btn.clicked.connect(edit_shape)
+
+        # Botón 🗑️
         delete_btn = QPushButton("🗑️")
         delete_btn.setFixedWidth(30)
 
@@ -796,14 +833,15 @@ class IRCorrectionApp(QMainWindow):
                 self.image_label_rgb.shapes.pop(shape_index)
                 self.image_label_rgb.shape_emissivities.pop(shape_index)
                 self.image_label_rgb.update_display()
-                self.update_emissivity_canvas()
                 self.refresh_shape_entries()
+                self.update_emissivity_canvas()
 
         delete_btn.clicked.connect(delete_shape)
 
         layout.addWidget(label)
         layout.addWidget(QLabel("Emissivity:"))
         layout.addWidget(emiss_input)
+        layout.addWidget(edit_btn)
         layout.addWidget(delete_btn)
         self.shapes_layout.addLayout(layout)
 

@@ -2,6 +2,8 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import cv2
+from io import BytesIO
+from PIL import Image
 from scipy.constants import sigma  # Boltzmann constant (sigma)
 
 # Define the resolution for both continuous and discrete heatmaps
@@ -89,8 +91,6 @@ def correction_image(temperature, heatmap, emissivity_matrix):
     radiance_heatmap = temperature_to_radiance(heatmap)
     radiance_heatmap = cv2.resize(radiance_heatmap, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
 
-    visualize_heatmap(radiance_heatmap, f"Primera Radiancia (T={temperature}K)", "Energy difference (W/m²)")
-
     # Apply emissivity correction
     ideal_heatmap_continuous, _ = multiply_emissivity(ideal_heatmap, emissivity_matrix)
 
@@ -99,10 +99,6 @@ def correction_image(temperature, heatmap, emissivity_matrix):
 
     # Convert to discrete
     correction_T_discrete = convert_discrete(correction_T)
-
-    # Visualize the results
-    visualize_heatmap(correction_T, f"Error Radiation Heatmap Conitnuous (T={temperature}K)", "Energy difference (W/m²)")
-    visualize_heatmap(correction_T_discrete, f"Error Radiation Heatmap Discrete (T={temperature}K)", "Energy difference (W/m²)")
 
     # Saving the results
     folder_name = f"T{int(temperature)}"
@@ -119,26 +115,26 @@ def correction_image(temperature, heatmap, emissivity_matrix):
 
 ## TRUE TEMPERATURE
 
-def final_image(temperature, heatmap, correction_image, emissivity_matrix, tau):
+def final_image(temperature, heatmap, correction_image, emissivity_matrix, tau, name_suffix=""):
 
     " T_real = [(sigma * T_heatmap^4 - R)/(tau * epsilon * sigma)]^(1/4)"
+
+    print("Emissivity min/max:", np.min(emissivity_matrix), np.max(emissivity_matrix))
 
     # Generate both heatmaps
     radiance_heatmap = temperature_to_radiance(heatmap) # captured by the camera === J
     radiance_heatmap = cv2.resize(radiance_heatmap, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
 
-    visualize_heatmap(radiance_heatmap, f"Radiance map before correction (T={temperature}K)", "Energy difference (W/m²)")
-    visualize_heatmap(correction_image, f"Radiance reflection used for correction (T={temperature}K)", "Energy difference (W/m²)")
-
-
     # Apply emissivity correction
     minus = radiance_heatmap - correction_image
     radiometric_heatmap, _ = divide_emissivity(minus, emissivity_matrix)
-    
-    visualize_heatmap(radiometric_heatmap, f"Radiance heatmap after emissivity (T={temperature}K)", "Energy difference (W/m²)")
-
+ 
     # Apply transmissivity
     true_radiometric_heatmap = radiometric_heatmap / tau # true radiance
+
+    print("Radiance Heatmap min/max:", np.min(radiance_heatmap), np.max(radiance_heatmap))
+    print("Correction Image min/max:", np.min(correction_image), np.max(correction_image))
+    print("Rest min/max:", np.min(minus), np.max(minus))
 
     # Obtain temperature
     true_temperature = (true_radiometric_heatmap / sigma)**(1/4)
@@ -146,15 +142,7 @@ def final_image(temperature, heatmap, correction_image, emissivity_matrix, tau):
     # Convert to discrete
     true_radiometric_heatmap_discrete = convert_discrete(true_radiometric_heatmap)
     true_temperature_discrete = convert_discrete(true_temperature)
-
-    # Visualize the results
-
-    visualize_heatmap(true_radiometric_heatmap, f"Radiometric Heatmap Continuous (T={temperature}K)", "Energy difference (W/m²)")
-    visualize_heatmap(true_radiometric_heatmap_discrete, f"Radiometric Heatmap Discrete (T={temperature}K)", "Energy difference (W/m²)")
-
-    visualize_heatmap(true_temperature, f"True Temperature Heatmap Continuous (T={temperature}K)", "(K)")
-    visualize_heatmap(true_temperature_discrete, f"True Temperature Heatmap Discrete (T={temperature}K)", "(K)")
-
+    
    # Saving the results
     folder_name = f"T{int(temperature)}"
     os.makedirs(folder_name, exist_ok=True)
@@ -168,3 +156,43 @@ def final_image(temperature, heatmap, correction_image, emissivity_matrix, tau):
     np.save(file_path, true_temperature)
     file_path = os.path.join(folder_name, f"true_temperature_T{int(temperature)}_discrete.npy")
     np.save(file_path, true_temperature_discrete)
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(true_temperature, cmap="hot")
+    fig.colorbar(im, ax=ax, label="Temperature (K)")
+    ax.set_title("Corrected Temperature")
+    plt.tight_layout()
+
+    # Convertir figura a QImage para insertar en la interfaz
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    img_np = np.array(img)
+    plt.close()
+
+    # Imagen continua (true_temperature)
+    fig1, ax1 = plt.subplots(figsize=(6, 5))
+    im1 = ax1.imshow(true_temperature, cmap="hot")
+    fig1.colorbar(im1, ax=ax1, label="Temperature (K)")
+    ax1.set_title("Corrected Temperature")
+    plt.tight_layout()
+    buf1 = BytesIO()
+    plt.savefig(buf1, format='png')
+    buf1.seek(0)
+    img_np1 = np.array(Image.open(buf1).convert("RGB"))
+    plt.close()
+
+    # Imagen discreta (true_temperature_discrete)
+    fig2, ax2 = plt.subplots(figsize=(6, 5))
+    im2 = ax2.imshow(true_temperature_discrete, cmap="hot")
+    fig2.colorbar(im2, ax=ax2, label="Discrete Temp")
+    ax2.set_title("Discrete Zones")
+    plt.tight_layout()
+    buf2 = BytesIO()
+    plt.savefig(buf2, format='png')
+    buf2.seek(0)
+    img_np2 = np.array(Image.open(buf2).convert("RGB"))
+    plt.close()
+
+    return true_temperature, true_temperature_discrete

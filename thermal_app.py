@@ -2,6 +2,11 @@ import sys
 import os
 import numpy as np
 import cv2
+from matplotlib import pyplot as plt
+from io import BytesIO
+from PIL import Image
+
+from tifffile import imread
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton,
@@ -160,6 +165,26 @@ class ClickableImageLabel(QLabel):
 "--------------------------------------------------------------------------------------------"
 "--------------------------------------------------------------------------------------------"
 "--------------------------------------------------------------------------------------------"
+
+## Leyendas Imagenes
+
+def create_image_with_colorbar(matrix, title, label):
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(matrix, cmap='jet')
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(label)
+    ax.set_title(title)
+    plt.tight_layout()
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    plt.close()
+
+    return np.array(img)
+
 
 
 class IRCorrectionApp(QMainWindow):
@@ -362,14 +387,14 @@ class IRCorrectionApp(QMainWindow):
         self.image_label_model = ClickableImageLabel()
         self.image_label_model.setMinimumSize(300, 300)
 
-
         self.btn_apply_corr = QPushButton("Apply Correction")
+
         self.result_fig1 = QLabel("Fig 1 Placeholder")
-        self.result_fig1.setMinimumSize(200, 200)
+        self.result_fig1.setMinimumSize(300, 300)
         self.result_fig1.setAlignment(Qt.AlignCenter)
 
         self.result_fig2 = QLabel("Fig 2 Placeholder")
-        self.result_fig2.setMinimumSize(200, 200)
+        self.result_fig2.setMinimumSize(300, 300)
         self.result_fig2.setAlignment(Qt.AlignCenter)
 
         right_column.addWidget(model_title)
@@ -392,14 +417,13 @@ class IRCorrectionApp(QMainWindow):
 
         right_column.addLayout(model_buttons)
 
-
         right_column.addWidget(self.btn_apply_corr)
         right_column.addWidget(self.result_fig1)
         right_column.addWidget(self.result_fig2)
 
         ### === MONTAR T===
-        main_layout.addLayout(left_column, stretch=3)
-        main_layout.addLayout(right_column, stretch=1)
+        main_layout.addLayout(left_column, stretch=2)
+        main_layout.addLayout(right_column, stretch=3)
 
         container = QWidget()
         container.setLayout(main_layout)
@@ -574,24 +598,25 @@ class IRCorrectionApp(QMainWindow):
 
 #"-------------------------------------TIF---------------------------------------------"
 
+
     def load_image(self):
-        fname, _ = QFileDialog.getOpenFileName(self, 'Open TIF image', '', 'Image files (*.tif *.jpg *.png)')
-        if fname:
-            self.image_data = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
-            if self.image_data is not None:
-                self.image_tif_original = self.image_data.copy()
+        fname, _ = QFileDialog.getOpenFileName(self, 'Open TIF image', '', 'TIF files (*.tif)')
+        if not fname:
+            return
 
-                self.tif_display_image = self.generate_colored_tif_display(self.image_data)
+        self.image_data = imread(fname).astype(np.float32) + 273.15
+        self.image_tif_original = self.image_data.copy()
 
-                self.image_label_tif.set_numpy_image(self.tif_display_image)
-                self.start_tif_corner_selection()
+        self.tif_display_image = self.generate_colored_tif_display(self.image_data)
+        self.image_label_tif.set_numpy_image(self.tif_display_image)
+        self.start_tif_corner_selection()
+
 
     def generate_colored_tif_display(self, image_data):
         aligned_norm = cv2.normalize(image_data, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         colored = cv2.applyColorMap(aligned_norm, cv2.COLORMAP_JET)
         colored_rgb = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
         return colored_rgb
-
 
     def start_tif_corner_selection(self):
         self.image_label_tif.points.clear()
@@ -626,12 +651,16 @@ class IRCorrectionApp(QMainWindow):
         if len(self.image_label_tif.points) != 4:
             QMessageBox.warning(self, "Error", "Define 4 corners first.")
             return
+        
+        if self.image_tif_original is None:
+            QMessageBox.warning(self, "Error", "Load TIF first.")
+            return
 
         src_pts = np.array(self.image_label_tif.points, dtype='float32')
-        dst_pts = np.array([[0, 0], [400, 0], [400, 400], [0, 400]], dtype='float32')
+        dst_pts = np.array([[0, 0], [500, 0], [500, 500], [0, 500]], dtype='float32')
 
         matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
-        aligned = cv2.warpPerspective(self.image_tif_original, matrix, (400, 400))
+        aligned = cv2.warpPerspective(self.image_tif_original, matrix, (500, 500))
 
         self.tif_corners = self.image_label_tif.points.copy()
         self.image_data = aligned  # radiométrico original
@@ -796,7 +825,7 @@ class IRCorrectionApp(QMainWindow):
         else:
             shape_data = (shape_type, points)
 
-        # 🔑 Reemplaza o agrega nuevo
+        # Reemplaza o agrega nuevo
         if self.editing_shape_index is not None:
             self.image_label_rgb.shapes[self.editing_shape_index] = shape_data
             self.image_label_rgb.shape_emissivities[self.editing_shape_index] = emissivity
@@ -820,7 +849,6 @@ class IRCorrectionApp(QMainWindow):
         emiss_input.setFixedWidth(60)
 
         def update_emissivity():
-            # 🔑 usa siempre el índice actual calculado en runtime
             idx = self.shapes_layout.indexOf(layout)
             if idx < 0 or idx >= len(self.image_label_rgb.shape_emissivities):
                 return  # Safety
@@ -976,12 +1004,12 @@ class IRCorrectionApp(QMainWindow):
     def apply_model_alignment(self):
         if hasattr(self, 'model_corners') and len(self.model_corners) == 4:
             src = np.array(self.image_label_model.points, dtype=np.float32)
-            dst = np.array([[0, 0], [400, 0], [400, 400], [0, 400]], dtype=np.float32)
+            dst = np.array([[0, 0], [500, 0], [500, 500], [0, 500]], dtype=np.float32)
             matrix = cv2.getPerspectiveTransform(src, dst)
-            aligned = cv2.warpPerspective(self.model_original.astype(np.float32), matrix, (400, 400))
+            aligned = cv2.warpPerspective(self.model_original.astype(np.float32), matrix, (500, 500))
             self.model_data = aligned + 273.15  # Kelvin
 
-            # ✅ Visualizar en el visor del modelo
+            # Visualizar en el visor del modelo
             norm = cv2.normalize(aligned, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             colored = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
             temp_rgb = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
@@ -1005,15 +1033,11 @@ class IRCorrectionApp(QMainWindow):
         self.image_label_model.set_numpy_image(temp_rgb)
 
     def load_correction_model(self):
-        fname, _ = QFileDialog.getOpenFileName(self, 'Open correction model image (.tif)', '', 'Image files (*.tif)')
+        fname, _ = QFileDialog.getOpenFileName(self, 'Open correction model image (.tif)', '', 'TIF files (*.tif)')
         if not fname:
             return
 
-        image = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
-        if image is None:
-            QMessageBox.warning(self, "Error", "Could not load correction model.")
-            return
-
+        image = imread(fname).astype(np.float32)
         self.model_original = image.copy()
         self.model_data = image.copy()
 
@@ -1022,7 +1046,6 @@ class IRCorrectionApp(QMainWindow):
         colored = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
         temp_rgb = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
 
-        # ❗️Esta línea es la clave
         self.image_label_model.set_numpy_image(temp_rgb)
 
         # Selección de esquinas
@@ -1054,63 +1077,59 @@ class IRCorrectionApp(QMainWindow):
         self.image_label_model.update_display()
         QMessageBox.information(self, "Select", "Click 4 corners on the correction model.")
 
-
     def apply_correction(self):
-        if not hasattr(self, 'model_data'):
-            QMessageBox.warning(self, "Error", "Please load a correction model before applying correction.")
-            return
+        from radiation_correction import correction_image, final_image
 
-        if self.image_data is None:
-            QMessageBox.warning(self, "Error", "Load an image first.")
+        if self.image_data is None or self.model_data is None:
+            QMessageBox.warning(self, "Error", "Load both TIF and correction model first.")
             return
 
         try:
-            temperature = float(self.temp_input.text())
-            tau = float(self.tau_input.text()) if self.tau_input.text() else 1.0
-            if not (0 < tau <= 1):
-                raise ValueError
+            temperature = float(self.temp_input.text().replace(",", "."))
+            tau = float(self.tau_input.text().replace(",", "."))
         except ValueError:
-            QMessageBox.warning(self, "Error", "Please enter valid temperature and tau.")
+            QMessageBox.warning(self, "Error", "Enter valid numbers for Temperature and Tau.")
             return
 
-        # Construir ruta del archivo de corrección
-        temperature_int = int(round(temperature))
-        folder_name = f"T{temperature_int}"
-        correction_path = os.path.join(folder_name, f"correction_T{temperature_int}.npy")
-
-        # Obtener matriz de emisividad
         emissivity_matrix = self.build_emissivity_matrix()
         if emissivity_matrix is None:
+            QMessageBox.warning(self, "Error", "Emissivity matrix is missing.")
             return
 
-        # Convertir imagen a Kelvin
-        aligned_radiometric_data = self.image_data.astype(np.float32) + 273.15
-
-        if not hasattr(self, 'model_corners') or len(self.model_corners) != 4:
-            QMessageBox.warning(self, "Error", "Define 4 corners for the correction model.")
+        if self.image_data.shape != self.model_data.shape:
+            QMessageBox.warning(self, "Error", "Model and TIF image must have the same shape.")
             return
 
-        src_pts = np.array(self.model_corners, dtype='float32')
-        dst_pts = np.array([[0, 0], [400, 0], [400, 400], [0, 400]], dtype='float32')
-        matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
-        model_aligned = cv2.warpPerspective(self.model_original.astype(np.float32), matrix, (400, 400))
-        model_aligned = model_aligned + 273.15  # Kelvin
+        # Crear sufijo de nombre para guardar los archivos
+        T_str = f"T{int(round(temperature))}"
 
-        from radiation_correction import correction_image, final_image
+        # Calcular corrección por reflexión
+        correction_T, _ = correction_image(temperature, self.model_data, emissivity_matrix)
 
-        correction_T, _ = correction_image(temperature, model_aligned, emissivity_matrix)
-        true_temp, *_ = final_image(temperature, aligned_radiometric_data, correction_T, emissivity_matrix)
+        # Calcular temperatura corregida real
+        true_temp, true_temp_disc = final_image(
+            temperature, self.image_data, correction_T, emissivity_matrix, tau, T_str
+        )
 
-        # Mostrar visualmente
-        import matplotlib.pyplot as plt
-        plt.figure(figsize=(8, 6))
-        plt.imshow(true_temp, cmap='hot')
-        plt.colorbar(label='Temperature (K)')
-        plt.title("True Temperature Map (Continuous)")
-        plt.tight_layout()
-        plt.show()
+        # Imagen continua
+        colored_temp = create_image_with_colorbar(true_temp, "Corrected Temperature (Continuous)", "Temperature (K)")
+        colored_temp = cv2.cvtColor(colored_temp, cv2.COLOR_BGR2RGB)
 
-        QMessageBox.information(self, "Correction Completed", "Radiation correction applied and temperature map calculated.")
+        h1, w1, ch1 = colored_temp.shape
+        qimg1 = QImage(colored_temp.data, w1, h1, ch1 * w1, QImage.Format_RGB888)
+        pixmap1 = QPixmap.fromImage(qimg1).scaled(self.result_fig1.size(), Qt.KeepAspectRatio)
+        self.result_fig1.setPixmap(pixmap1)
+
+        # Imagen discreta
+        colored_disc = create_image_with_colorbar(true_temp_disc, "Corrected Temperature (Discrete)", "Temperature (K)")
+        colored_disc = cv2.cvtColor(colored_disc, cv2.COLOR_BGR2RGB)
+
+        h2, w2, ch2 = colored_disc.shape
+        qimg2 = QImage(colored_disc.data, w2, h2, ch2 * w2, QImage.Format_RGB888)
+        pixmap2 = QPixmap.fromImage(qimg2).scaled(self.result_fig2.size(), Qt.KeepAspectRatio)
+        self.result_fig2.setPixmap(pixmap2)
+
+        QMessageBox.information(self, "Done", "Correction applied and temperature map shown.")
 
     def calibrate_temperature_from_tif(self):
         matrix = self.build_emissivity_matrix()
@@ -1119,13 +1138,6 @@ class IRCorrectionApp(QMainWindow):
 
         calibrated_matrix = calibrate_tif_temperature(self.image_data, matrix, m=20, n=20, is_kelvin=True)
 
-        import matplotlib.pyplot as plt
-        plt.figure(figsize=(8, 6))
-        plt.imshow(calibrated_matrix, cmap='hot')
-        plt.title("Calibrated Temperature Map from TIF")
-        plt.colorbar(label="Temperature (K)")
-        plt.tight_layout()
-        plt.show()
 
 if __name__ == "__main__":
 

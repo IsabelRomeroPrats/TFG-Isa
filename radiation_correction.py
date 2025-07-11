@@ -119,9 +119,7 @@ def final_image(temperature, heatmap, correction_image, emissivity_matrix, tau, 
 
     " T_real = [(sigma * T_heatmap^4 - R)/(tau * epsilon * sigma)]^(1/4)"
 
-    print("Emissivity min/max:", np.min(emissivity_matrix), np.max(emissivity_matrix))
-
-    # Generate both heatmaps
+     # Generate both heatmaps
     radiance_heatmap = temperature_to_radiance(heatmap) # captured by the camera === J
     radiance_heatmap = cv2.resize(radiance_heatmap, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
 
@@ -131,10 +129,6 @@ def final_image(temperature, heatmap, correction_image, emissivity_matrix, tau, 
  
     # Apply transmissivity
     true_radiometric_heatmap = radiometric_heatmap / tau # true radiance
-
-    print("Radiance Heatmap min/max:", np.min(radiance_heatmap), np.max(radiance_heatmap))
-    print("Correction Image min/max:", np.min(correction_image), np.max(correction_image))
-    print("Rest min/max:", np.min(minus), np.max(minus))
 
     # Obtain temperature
     true_temperature = (true_radiometric_heatmap / sigma)**(1/4)

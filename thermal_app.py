@@ -171,7 +171,7 @@ class ClickableImageLabel(QLabel):
 def create_image_with_colorbar(matrix, title, label):
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(matrix, cmap='jet')
+    im = ax.imshow(matrix, cmap='hot')
     cbar = plt.colorbar(im, ax=ax)
     cbar.set_label(label)
     ax.set_title(title)
@@ -243,8 +243,6 @@ class IRCorrectionApp(QMainWindow):
         self.image_label_rgb.setMinimumSize(300, 300)
         rgb_block = QVBoxLayout()
         rgb_block.addWidget(self.image_label_rgb)
-
-
 
         rgb_buttons = QHBoxLayout()
         self.btn_insert_rgb = QPushButton("Insert RGB")
@@ -418,8 +416,18 @@ class IRCorrectionApp(QMainWindow):
         right_column.addLayout(model_buttons)
 
         right_column.addWidget(self.btn_apply_corr)
-        right_column.addWidget(self.result_fig1)
-        right_column.addWidget(self.result_fig2)
+        results_row = QHBoxLayout()
+        results_row.addWidget(self.result_fig1)
+        results_row.addWidget(self.result_fig2)
+        right_column.addLayout(results_row)
+
+        self.btn_download_all = QPushButton("📁 Download Results")
+        btn_download_layout = QHBoxLayout()
+        btn_download_layout.addStretch()
+        btn_download_layout.addWidget(self.btn_download_all)
+        btn_download_layout.addStretch()
+        right_column.addLayout(btn_download_layout)
+
 
         ### === MONTAR T===
         main_layout.addLayout(left_column, stretch=2)
@@ -461,6 +469,7 @@ class IRCorrectionApp(QMainWindow):
         self.btn_rotate_model.clicked.connect(self.rotate_model_image)
         self.btn_apply_corr.clicked.connect(self.apply_correction)
         self.btn_add_model.clicked.connect(self.load_correction_model)
+        self.btn_download_all.clicked.connect(self.download_all_images)
 
 ###
 
@@ -1032,6 +1041,22 @@ class IRCorrectionApp(QMainWindow):
         temp_rgb = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
         self.image_label_model.set_numpy_image(temp_rgb)
 
+    def download_all_images(self):
+
+        folder = QFileDialog.getExistingDirectory(self, "Select Download Folder")
+        if not folder:
+            return
+
+        if hasattr(self, 'colored_temp'):
+            cv2.imwrite(os.path.join(folder, 'continuous_rgb.png'), cv2.cvtColor(self.colored_temp, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(os.path.join(folder, 'continuous_rgb.tif'), cv2.cvtColor(self.colored_temp, cv2.COLOR_RGB2BGR))
+
+        if hasattr(self, 'colored_disc'):
+            cv2.imwrite(os.path.join(folder, 'discrete_tif.png'), cv2.cvtColor(self.colored_disc, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(os.path.join(folder, 'discrete_tif.tif'), cv2.cvtColor(self.colored_disc, cv2.COLOR_RGB2BGR))
+
+        print(f"Images saved in: {folder}")
+
     def load_correction_model(self):
         fname, _ = QFileDialog.getOpenFileName(self, 'Open correction model image (.tif)', '', 'TIF files (*.tif)')
         if not fname:
@@ -1112,20 +1137,18 @@ class IRCorrectionApp(QMainWindow):
         )
 
         # Imagen continua
-        colored_temp = create_image_with_colorbar(true_temp, "Corrected Temperature (Continuous)", "Temperature (K)")
-        colored_temp = cv2.cvtColor(colored_temp, cv2.COLOR_BGR2RGB)
+        self.colored_temp = create_image_with_colorbar(true_temp, "Corrected Temperature (Continuous)", "Temperature (K)")
 
-        h1, w1, ch1 = colored_temp.shape
-        qimg1 = QImage(colored_temp.data, w1, h1, ch1 * w1, QImage.Format_RGB888)
+        h1, w1, ch1 = self.colored_temp.shape
+        qimg1 = QImage(self.colored_temp.data, w1, h1, ch1 * w1, QImage.Format_RGB888)
         pixmap1 = QPixmap.fromImage(qimg1).scaled(self.result_fig1.size(), Qt.KeepAspectRatio)
         self.result_fig1.setPixmap(pixmap1)
 
         # Imagen discreta
-        colored_disc = create_image_with_colorbar(true_temp_disc, "Corrected Temperature (Discrete)", "Temperature (K)")
-        colored_disc = cv2.cvtColor(colored_disc, cv2.COLOR_BGR2RGB)
+        self.colored_disc = create_image_with_colorbar(true_temp_disc, "Corrected Temperature (Discrete)", "Temperature (K)")
 
-        h2, w2, ch2 = colored_disc.shape
-        qimg2 = QImage(colored_disc.data, w2, h2, ch2 * w2, QImage.Format_RGB888)
+        h2, w2, ch2 = self.colored_disc.shape
+        qimg2 = QImage(self.colored_disc.data, w2, h2, ch2 * w2, QImage.Format_RGB888)
         pixmap2 = QPixmap.fromImage(qimg2).scaled(self.result_fig2.size(), Qt.KeepAspectRatio)
         self.result_fig2.setPixmap(pixmap2)
 

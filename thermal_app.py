@@ -5,6 +5,8 @@ import cv2
 from matplotlib import pyplot as plt
 from io import BytesIO
 from PIL import Image
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
 
 from tifffile import imread
 
@@ -171,7 +173,7 @@ class ClickableImageLabel(QLabel):
 def create_image_with_colorbar(matrix, title, label):
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(matrix, cmap='hot')
+    im = ax.imshow(matrix, cmap='jet')
     cbar = plt.colorbar(im, ax=ax)
     cbar.set_label(label)
     ax.set_title(title)
@@ -644,13 +646,20 @@ class IRCorrectionApp(QMainWindow):
             QMessageBox.warning(self, "Error", "Load TIF first.")
             return
 
+        # Recupera la matriz térmica original
         self.image_data = self.image_tif_original.copy()
-        self.image_label_tif.set_numpy_image(self.image_data, update_display=False, clear_points=False)
 
+        # NO modifiques los datos térmicos aquí
+        # Solo genera una versión visual para poder ajustar las esquinas
+        self.tif_display_image = self.generate_colored_tif_display(self.image_data)
+
+        # Restaura esquinas si ya estaban seleccionadas
         if len(self.tif_corners) != 4:
             QMessageBox.warning(self, "Error", "Corners must be defined first.")
             return
 
+        # Carga la imagen de visualización sin perder datos térmicos
+        self.image_label_tif.set_numpy_image(self.tif_display_image, update_display=True, clear_points=False)
         self.image_label_tif.points = self.tif_corners.copy()
         self.image_label_tif.mode = 'adjust_corners'
         self.image_label_tif.update_display()
@@ -660,7 +669,7 @@ class IRCorrectionApp(QMainWindow):
         if len(self.image_label_tif.points) != 4:
             QMessageBox.warning(self, "Error", "Define 4 corners first.")
             return
-        
+
         if self.image_tif_original is None:
             QMessageBox.warning(self, "Error", "Load TIF first.")
             return
@@ -669,14 +678,22 @@ class IRCorrectionApp(QMainWindow):
         dst_pts = np.array([[0, 0], [500, 0], [500, 500], [0, 500]], dtype='float32')
 
         matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+
+        # Mantener matriz térmica real (radiométrica)
         aligned = cv2.warpPerspective(self.image_tif_original, matrix, (500, 500))
-
+        self.image_data = aligned  # <- esta es la que se usará para cálculos térmicos
         self.tif_corners = self.image_label_tif.points.copy()
-        self.image_data = aligned  # radiométrico original
-        self.tif_display_image = self.generate_colored_tif_display(aligned)
-        self.image_label_tif.set_numpy_image(self.tif_display_image)
-        self.update_superpose()
 
+        # Generar visualización en colormap 'hot' (sin perder datos)
+
+        norm = plt.Normalize(vmin=np.nanmin(aligned), vmax=np.nanmax(aligned))
+        colored = plt.get_cmap('jet')(norm(aligned))[:, :, :3]
+        self.tif_display_image = (colored * 255).astype(np.uint8)
+
+        # Mostrar la imagen coloreada (sin modificar datos reales)
+        self.image_label_tif.set_numpy_image(self.tif_display_image)
+
+        self.update_superpose()
         QMessageBox.information(self, "Done", "TIF image aligned with adjusted corners.")
 
     def start_tif_corner_selection(self):

@@ -1146,7 +1146,7 @@ class IRCorrectionApp(QMainWindow):
         T_str = f"T{int(round(temperature))}"
 
         # Calcular corrección por reflexión
-        correction_T, _ = correction_image(temperature, self.model_data, emissivity_matrix)
+        correction_T, _ = correction_image(temperature, self.model_data, tau, emissivity_matrix)
 
         # Calcular temperatura corregida real
         true_temp, true_temp_disc = final_image(

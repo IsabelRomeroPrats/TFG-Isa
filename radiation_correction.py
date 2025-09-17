@@ -78,7 +78,7 @@ def divide_emissivity(radiance_heatmap, emissivity_matrix):
 
 ## CORRECTION IMAGE
 
-def correction_image(temperature, heatmap, emissivity_matrix):
+def correction_image(temperature, heatmap, tau, emissivity_matrix):
 
     " R =  sigma * T_captured^4 - epsilon * sigma * T_ideal^4 "
 
@@ -93,6 +93,9 @@ def correction_image(temperature, heatmap, emissivity_matrix):
 
     # Apply emissivity correction
     ideal_heatmap_continuous, _ = multiply_emissivity(ideal_heatmap, emissivity_matrix)
+
+    # Apply emissivity correction
+    ideal_heatmap_continuous = ideal_heatmap_continuous * tau
 
     # Math
     correction_T =  radiance_heatmap - ideal_heatmap_continuous

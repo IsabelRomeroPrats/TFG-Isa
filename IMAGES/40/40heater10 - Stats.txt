@@ -1,0 +1,8 @@
+ Statistic [units]              Image                         
+ Mean [C]                       37.24                         
+ Sum                            N/A                           
+ Std. Dev. [C]                  2.42                          
+ Center [C]                     (319.5, 239.5) 39.92          
+ Maximum [C]                    (266, 195) 49.94              
+ Minimum [C]                    (35, 449) 34.02               
+ Number of Pixels               307200                        

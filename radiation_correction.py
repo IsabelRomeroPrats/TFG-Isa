@@ -13,6 +13,90 @@ m, n = 20, 20  # Discrete heatmap 15x20
 # Define the default parameters
 # tau = 0.89
 
+def save_dual_maps(prefix, radiance_map, out_dir, cmap="hot"):
+    """
+    Guarda dos versiones del mismo mapa:
+    - Radiancia (W/m^2): archivo *_radiance_*.npy y *_radiance_*.png
+    - Kelvin (temperatura de brillo): archivo *_kelvin_*.npy y *_kelvin_*.png
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Radiancia
+    np.save(os.path.join(out_dir, f"{prefix}_radiance.npy"), radiance_map)
+    fig_r, ax_r = plt.subplots(figsize=(6, 5))
+    im_r = ax_r.imshow(radiance_map, cmap=cmap)
+    fig_r.colorbar(im_r, ax=ax_r, label="Radiance (W/m²)")
+    ax_r.set_title(f"{prefix.replace('_',' ').title()} — Radiance")
+    fig_r.tight_layout()
+    fig_r.savefig(os.path.join(out_dir, f"{prefix}_radiance.png"), dpi=150)
+    plt.close(fig_r)
+
+    # Kelvin (temperatura de brillo equivalente)
+    kelvin_map = np.maximum(radiance_map, 0.0)**0.25 / (sigma**0.25)  # (R/sigma)**0.25
+    np.save(os.path.join(out_dir, f"{prefix}_kelvin.npy"), kelvin_map)
+    fig_k, ax_k = plt.subplots(figsize=(6, 5))
+    im_k = ax_k.imshow(kelvin_map, cmap=cmap)
+    fig_k.colorbar(im_k, ax=ax_k, label="Temperature (K)")
+    ax_k.set_title(f"{prefix.replace('_',' ').title()} — Kelvin")
+    fig_k.tight_layout()
+    fig_k.savefig(os.path.join(out_dir, f"{prefix}_kelvin.png"), dpi=150)
+    plt.close(fig_k)
+
+
+def _save_rgb_with_colorbar(arr, title, label, out_png, cmap="jet"):
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(arr, cmap=cmap)
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(label)
+    ax.set_title(title)
+    vmin, vmax = float(np.nanmin(arr)), float(np.nanmax(arr))
+    fig.text(0.5, -0.02, f"min={vmin:.6g}   max={vmax:.6g}",
+        ha="center", va="top", transform=ax.transAxes)
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+def _save_radiance_and_kelvin(prefix, R_map, folder):
+    """
+    Guarda radiancia (W/m^2) y Kelvin (brillo) en:
+      - {prefix}_radiance.tif  (float32)
+      - {prefix}_radiance_rgb.png
+      - {prefix}_kelvin.tif    (float32)
+      - {prefix}_kelvin_rgb.png
+    """
+    os.makedirs(folder, exist_ok=True)
+
+    R = np.asarray(R_map, dtype=np.float32)
+
+    # Radiancia .tif
+    cv2.imwrite(os.path.join(folder, f"{prefix}_radiance.tif"), R)
+    # Radiancia .png (RGB)
+    _save_rgb_with_colorbar(
+        R,
+        f"{prefix} — Radiance",
+        "Radiance (W/m²)",
+        os.path.join(folder, f"{prefix}_radiance_rgb.png")
+    )
+
+    # Kelvin (temperatura de brillo)
+    K = (np.maximum(R, 0.0) / sigma) ** 0.25
+    K = K.astype(np.float32)
+
+    # Kelvin .tif
+    cv2.imwrite(os.path.join(folder, f"{prefix}_kelvin.tif"), K)
+    # Kelvin .png (RGB)
+    _save_rgb_with_colorbar(
+        K,
+        f"{prefix} — Kelvin",
+        "Temperature (K)",
+        os.path.join(folder, f"{prefix}_kelvin_rgb.png")
+    )
+
+########################################
+
+########### CÓDIGO PRINCIPAL ###########
+
+########################################
 
 def temperature_to_radiance(temp_matrix):
     return sigma * (temp_matrix ** 4)
@@ -80,9 +164,9 @@ def divide_emissivity(radiance_heatmap, emissivity_matrix):
 
 def correction_image(temperature, heatmap, tau, emissivity_matrix):
 
-    " R =  sigma * T_captured^4 - epsilon * sigma * T_ideal^4 "
+    " J = tau * [epsilon * sigma * T_ideal^4 + R] = sigma * T_captured^4 "
 
-    " R = sigma * T_ideal^4 - epsilon * sigma * T_captured^4"
+    " R =  (sigma * T_captured^4) / tau - epsilon * sigma * T_ideal^4 "
 
     # Generate both heatmaps
     nonradiance_continuous_ideal_heatmap = np.full(continuous_shape, temperature, dtype=np.float32)
@@ -94,8 +178,9 @@ def correction_image(temperature, heatmap, tau, emissivity_matrix):
     # Apply emissivity correction
     ideal_heatmap_continuous, _ = multiply_emissivity(ideal_heatmap, emissivity_matrix)
 
-    # Apply emissivity correction
-    ideal_heatmap_continuous = ideal_heatmap_continuous * tau
+    # Apply tau correction
+    radiance_heatmap = radiance_heatmap / tau
+    # ideal_heatmap_continuous = ideal_heatmap_continuous * tau
 
     # Math
     correction_T =  radiance_heatmap - ideal_heatmap_continuous
@@ -103,15 +188,20 @@ def correction_image(temperature, heatmap, tau, emissivity_matrix):
     # Convert to discrete
     correction_T_discrete = convert_discrete(correction_T)
 
-    # Saving the results
     folder_name = f"T{int(temperature)}"
-    os.makedirs(folder_name, exist_ok=True)
+    # 1) Captured (J)
+    _save_radiance_and_kelvin(prefix=f"captured_T{int(temperature)}",
+                            R_map=radiance_heatmap,
+                            folder=folder_name)
+    # 2) CorrectionImage (ε σ T_ideal^4)
+    _save_radiance_and_kelvin(prefix=f"correctionImage_T{int(temperature)}",
+                            R_map=ideal_heatmap_continuous,
+                            folder=folder_name)
+    # 3) Reflexión R (sin τ)
+    _save_radiance_and_kelvin(prefix=f"reflexion_R_T{int(temperature)}",
+                            R_map=correction_T,
+                            folder=folder_name)
 
-    file_path = os.path.join(folder_name, f"correction_T{int(temperature)}.npy")
-    np.save(file_path, correction_T)
-
-    file_path = os.path.join(folder_name, f"correction_T{int(temperature)}_discrete.npy")
-    np.save(file_path, correction_T_discrete)
 
     return correction_T, correction_T_discrete
 
@@ -120,76 +210,27 @@ def correction_image(temperature, heatmap, tau, emissivity_matrix):
 
 def final_image(temperature, heatmap, correction_image, emissivity_matrix, tau, name_suffix=""):
 
-    " T_real = [(sigma * T_heatmap^4 - R)/(tau * epsilon * sigma)]^(1/4)"
+    " T_heatmap^4 * sigma = tau * [(sigma * T_real^4 * epsilon) + R]"
 
-     # Generate both heatmaps
+    " T_real = [((sigma * T_heatmap^4) / tau - R))/(epsilon * sigma)]^(1/4)"
+
+    # Generate both heatmaps
     radiance_heatmap = temperature_to_radiance(heatmap) # captured by the camera === J
     radiance_heatmap = cv2.resize(radiance_heatmap, (continuous_shape[1], continuous_shape[0]), interpolation=cv2.INTER_LINEAR)
 
-    # Apply emissivity correction
-    minus = radiance_heatmap - correction_image
-    radiometric_heatmap, _ = divide_emissivity(minus, emissivity_matrix)
- 
     # Apply transmissivity
-    true_radiometric_heatmap = radiometric_heatmap / tau # true radiance
+    radiometric_heatmap = radiance_heatmap / tau # true radiance
 
+    # Apply emissivity correction
+    #╔ correction_image = correction_image * tau
+    minus = radiometric_heatmap - correction_image
+    true_radiometric_heatmap, _ = divide_emissivity(minus, emissivity_matrix)
+ 
     # Obtain temperature
     true_temperature = (true_radiometric_heatmap / sigma)**(1/4)
 
     # Convert to discrete
     true_radiometric_heatmap_discrete = convert_discrete(true_radiometric_heatmap)
     true_temperature_discrete = convert_discrete(true_temperature)
-    
-   # Saving the results
-    folder_name = f"T{int(temperature)}"
-    os.makedirs(folder_name, exist_ok=True)
-
-    file_path = os.path.join(folder_name, f"radiometric_T{int(temperature)}.npy")
-    np.save(file_path, true_radiometric_heatmap)
-    file_path = os.path.join(folder_name, f"radiometric_T{int(temperature)}_discrete.npy")
-    np.save(file_path, true_radiometric_heatmap_discrete)
-
-    file_path = os.path.join(folder_name, f"true_temperature_T{int(temperature)}.npy")
-    np.save(file_path, true_temperature)
-    file_path = os.path.join(folder_name, f"true_temperature_T{int(temperature)}_discrete.npy")
-    np.save(file_path, true_temperature_discrete)
-
-    fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(true_temperature, cmap="hot")
-    fig.colorbar(im, ax=ax, label="Temperature (K)")
-    ax.set_title("Corrected Temperature")
-    plt.tight_layout()
-
-    # Convertir figura a QImage para insertar en la interfaz
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    img = Image.open(buf).convert("RGB")
-    img_np = np.array(img)
-    plt.close()
-
-    # Imagen continua (true_temperature)
-    fig1, ax1 = plt.subplots(figsize=(6, 5))
-    im1 = ax1.imshow(true_temperature, cmap="hot")
-    fig1.colorbar(im1, ax=ax1, label="Temperature (K)")
-    ax1.set_title("Corrected Temperature")
-    plt.tight_layout()
-    buf1 = BytesIO()
-    plt.savefig(buf1, format='png')
-    buf1.seek(0)
-    img_np1 = np.array(Image.open(buf1).convert("RGB"))
-    plt.close()
-
-    # Imagen discreta (true_temperature_discrete)
-    fig2, ax2 = plt.subplots(figsize=(6, 5))
-    im2 = ax2.imshow(true_temperature_discrete, cmap="hot")
-    fig2.colorbar(im2, ax=ax2, label="Discrete Temp")
-    ax2.set_title("Discrete Zones")
-    plt.tight_layout()
-    buf2 = BytesIO()
-    plt.savefig(buf2, format='png')
-    buf2.seek(0)
-    img_np2 = np.array(Image.open(buf2).convert("RGB"))
-    plt.close()
 
     return true_temperature, true_temperature_discrete

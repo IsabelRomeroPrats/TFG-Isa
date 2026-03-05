@@ -26,8 +26,6 @@ from scipy.constants import sigma
 from image_processing import warp_perspective_from_points, matrix_resized
 from radiation_correction import final_image, correction_image
 from calibration_processing import calibrate_tif_temperature
-from io_saver import (make_run_dir, save_all_outputs, save_metadata, save_maps_stats_csv)
-
 
 
 class ClickableImageLabel(QLabel):
@@ -172,94 +170,42 @@ class ClickableImageLabel(QLabel):
 
 ## Leyendas Imagenes
 
-def create_image_with_colorbar(matrix, title=None, label=None):
-    """
-    Genera imagen numpy RGB con ejes, colorbar y formato limpio.
-    Mantiene texto de min/max y mejora títulos legibles.
-    """
-    # --- Reformatear el título ---
-    if title:
-        # Sustituir guiones bajos por espacios y capitalizar palabras
-        clean_title = title.replace("_", " ").title()
-        # Detectar temperatura tipo "T293" -> "(T = 293 K)"
-        import re
-        match = re.search(r"T(\d+)", clean_title)
-        if match:
-            clean_title = re.sub(r"T\d+", f"(T = {match.group(1)} K)", clean_title)
-        title = clean_title
+def create_image_with_colorbar(matrix, title, label):
 
     fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(matrix, cmap='jet')
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(label)
+    ax.set_title(title)
+    plt.tight_layout()
 
-    # --- Mostrar imagen térmica ---
-    im = ax.imshow(matrix, cmap="jet", aspect="auto")
-
-    # --- Añadir colorbar ---
-    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    if label:
-        cbar.set_label(label, fontsize=11)
-
-    # --- Mostrar min y max en el pie de forma limpia ---
-    vmin, vmax = np.nanmin(matrix), np.nanmax(matrix)
-    text_minmax = f"min = {vmin:.3f}   max = {vmax:.3f}"
-    fig.text(0.5, 0.02, text_minmax, ha="center", va="bottom", fontsize=9)
-
-    # --- Título con espaciado ---
-    if title:
-        ax.set_title(title, fontsize=13, pad=15, weight="bold")
-
-    # --- Ejes ---
-    ax.set_xlabel("Pixel X", fontsize=10)
-    ax.set_ylabel("Pixel Y", fontsize=10)
-    ax.tick_params(axis='both', which='major', labelsize=9)
-
-    # --- Márgenes equilibrados ---
-    plt.subplots_adjust(left=0.12, right=0.88, top=0.9, bottom=0.12)
-    plt.tight_layout(rect=[0, 0.03, 1, 0.97])  # deja hueco para min/max
-
-    # --- Guardar en buffer ---
     buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=300, bbox_inches='tight', pad_inches=0.05)
+    plt.savefig(buf, format='png')
     buf.seek(0)
     img = Image.open(buf).convert("RGB")
-    plt.close(fig)
+    plt.close()
 
     return np.array(img)
 
 
-class IRCorrectionApp(QMainWindow):
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
+class IRCorrectionApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
         self.setWindowTitle("IR Correction Tool")
         self.setGeometry(100, 100, 1200, 800)
-
-        # Estado para guardados/análisis
-        self.temperature_nominal = None  # K
-        self.tau = None                 # float
-        self.power_w = None             # opcional
-        self.run_tag = None             # opcional
-
-        # Buffers de resultados que guardará save_results()
-        self.captured_J = None                   # σ * T_heatmap^4
-        self.correctionImage_eps_sigma_T4 = None # ε * σ * T_ideal^4
-        self.R_map = None                        # R (sin τ)
-        self.corrected_sigma_T4 = None           # σ * T_real^4
-        self.true_temperature = None             # T_real (K)
-
-        # Resto de estado que ya usas
-        self.image_rgb = None
+        
+        #Almacenar imagen a color
+        self.image_rgb = None  
         self.image_path = None
         self.image_data = None
         self.temperature = None
         self.emissivity = None
-        self.config_locked = False
         self.tif_corners = []
-        self.rgb_display_image = None
-        self.tif_display_image = None
-        self.editing_shape_index = None
-
+        self.rgb_display_image = None  
+        self.tif_display_image = None  
+        self.editing_shape_index = None  
         self.setup_ui()
-
 
     def setup_ui(self):
 
@@ -370,55 +316,12 @@ class IRCorrectionApp(QMainWindow):
         images_row.addLayout(tif_block)
         images_row.addLayout(superpose_block)
 
-        # ---- MODEL + REFLECTION ----
-        model_title = QLabel("Correction Model and Reflection")
-        model_title.setAlignment(Qt.AlignCenter)
-        model_title.setStyleSheet("font-weight: bold; font-size: 14px; margin-bottom: 8px;")
-
-        self.btn_add_model = QPushButton("Add Correction Model")
-        self.btn_add_model.setFixedHeight(35)
-
-        # === Imagen del modelo de corrección (TIF) ===
-        self.image_label_model = ClickableImageLabel()
-        self.image_label_model.setMinimumSize(420, 420)
-
-        # === Imagen de la reflexión R (resultado intermedio) ===
-        self.image_label_reflection = QLabel("Reflection map (R)")
-        self.image_label_reflection.setAlignment(Qt.AlignCenter)
-        self.image_label_reflection.setMinimumSize(420, 420)
-
-        # === Layout horizontal con ambas imágenes ===
-        model_row = QHBoxLayout()
-        model_row.addStretch()
-        model_row.addWidget(self.image_label_model)
-        model_row.addSpacing(30)
-        model_row.addWidget(self.image_label_reflection)
-        model_row.addStretch()
-
-        # === Botones del modelo (debajo, en un bloque propio) ===
-        model_buttons = QHBoxLayout()
-        model_buttons.addStretch()
-        self.btn_select_model = QPushButton("Adjust Model")
-        self.btn_apply_model = QPushButton("Apply Model")
-        self.btn_rotate_model = QPushButton("↻")
-        for b in [self.btn_select_model, self.btn_apply_model]:
-            b.setFixedHeight(34)
-        self.btn_rotate_model.setFixedSize(34, 34)
-        model_buttons.addWidget(self.btn_select_model)
-        model_buttons.addWidget(self.btn_apply_model)
-        model_buttons.addWidget(self.btn_rotate_model)
-        model_buttons.addStretch()
-
-        # === Bloque vertical: imágenes + botones ===
+        # ---- MODEL ----
         model_block = QVBoxLayout()
-        model_block.addWidget(model_title)
-        model_block.addWidget(self.btn_add_model)
-        model_block.addLayout(model_row)
-        model_block.addLayout(model_buttons)
-
-        # === Añadir todo junto al layout principal de la derecha ===
-        right_column.addLayout(model_block)
-
+        model_block.addWidget(QLabel("Correction Model"))
+        self.image_label_model = ClickableImageLabel()
+        self.image_label_model.setMinimumSize(300, 300)
+        model_block.addWidget(self.image_label_model)
 
         ### === PARÁMETROS Y DIBUJO ===
         # === TITLES arriba ===
@@ -438,20 +341,8 @@ class IRCorrectionApp(QMainWindow):
         self.emiss_input = QLineEdit()
         self.emiss_input.editingFinished.connect(self.update_emissivity_canvas)
         self.emiss_input.setPlaceholderText("Emissivity")
-            # Tau input + botón de cambio manual
         self.tau_input = QLineEdit()
-        self.tau_input.setText("0.89")  # valor por defecto
-        self.tau_input.setFixedWidth(60)
-        self.tau_input.setEnabled(False)  # bloqueado inicialmente
-
-        self.btn_edit_tau = QPushButton("✎")  # pequeño botón de edición
-        self.btn_edit_tau.setFixedSize(25, 25)
-        self.btn_edit_tau.setToolTip("Editar tau manualmente")
-
-
-        self.emiss_input.editingFinished.connect(self._on_params_changed)
-        self.tau_input.editingFinished.connect(self._on_params_changed)
-        self.temp_input.editingFinished.connect(self._on_params_changed)
+        self.tau_input.setPlaceholderText("Tau")
 
         params_layout.addWidget(QLabel("Temperature:"))
         params_layout.addWidget(self.temp_input)
@@ -459,8 +350,6 @@ class IRCorrectionApp(QMainWindow):
         params_layout.addWidget(self.emiss_input)
         params_layout.addWidget(QLabel("Tau:"))
         params_layout.addWidget(self.tau_input)
-        params_layout.addWidget(self.btn_edit_tau)  
-
 
         left_column.addLayout(params_layout)
 
@@ -490,49 +379,56 @@ class IRCorrectionApp(QMainWindow):
 
         left_column.addLayout(shapes_and_matrix)
 
-        # === Botón Apply Correction ===
-        self.btn_apply_corr = QPushButton("Apply Correction")
-        self.btn_apply_corr.setFixedHeight(40)
+        ### === COLUMNA DERECHA: CORRECCIÓN Y RESULTADOS ===
+        self.btn_add_model = QPushButton("Add Correction Model")
+        model_title = QLabel("Correction Model")
+        model_title.setAlignment(Qt.AlignCenter)
+        model_title.setStyleSheet("font-weight: bold;")
+        self.image_label_model = ClickableImageLabel()
+        self.image_label_model.setMinimumSize(300, 300)
 
-        # === Figuras de resultados ===
+        self.btn_apply_corr = QPushButton("Apply Correction")
+
         self.result_fig1 = QLabel("Fig 1 Placeholder")
+        self.result_fig1.setMinimumSize(300, 300)
         self.result_fig1.setAlignment(Qt.AlignCenter)
-        self.result_fig1.setMinimumSize(400, 350)
 
         self.result_fig2 = QLabel("Fig 2 Placeholder")
+        self.result_fig2.setMinimumSize(300, 300)
         self.result_fig2.setAlignment(Qt.AlignCenter)
-        self.result_fig2.setMinimumSize(400, 350)
 
+        right_column.addWidget(model_title)
+        right_column.addWidget(self.btn_add_model)
+        right_column.addWidget(self.image_label_model)
 
-        # === Resultados finales ===
+        # Botones para modelo de corrección
+        model_buttons = QHBoxLayout()
+        self.btn_select_model = QPushButton("Adjust Model")
+        self.btn_apply_model = QPushButton("Apply Model")
+        self.btn_rotate_model = QPushButton("↻")
+
+        self.btn_select_model.setFixedHeight(30)
+        self.btn_apply_model.setFixedHeight(30)
+        self.btn_rotate_model.setFixedSize(30, 30)
+
+        model_buttons.addWidget(self.btn_select_model)
+        model_buttons.addWidget(self.btn_apply_model)
+        model_buttons.addWidget(self.btn_rotate_model)
+
+        right_column.addLayout(model_buttons)
+
         right_column.addWidget(self.btn_apply_corr)
         results_row = QHBoxLayout()
         results_row.addWidget(self.result_fig1)
         results_row.addWidget(self.result_fig2)
         right_column.addLayout(results_row)
 
-        # === NEW CONFIG BUTTONS ===
-        self.btn_lock = QPushButton("🔒 Lock Config")
-        self.btn_unlock = QPushButton("🔓 Unlock Config")
-        self.btn_clear_tif = QPushButton("🧹 Clear TIF & Results")
-
-        config_buttons = QHBoxLayout()
-        config_buttons.addWidget(self.btn_lock)
-        config_buttons.addWidget(self.btn_unlock)
-        config_buttons.addWidget(self.btn_clear_tif)
-
-        right_column.addLayout(config_buttons)
-
-
-        # === Botón Download Results ===
-        # self.btn_download_all = QPushButton("📁 Download Results")
-        # self.btn_download_all.setFixedHeight(35)
-        # btn_download_layout = QHBoxLayout()
-        # btn_download_layout.addStretch()
-        # btn_download_layout.addWidget(self.btn_download_all)
-        # btn_download_layout.addStretch()
-        # right_column.addLayout(btn_download_layout)
-
+        self.btn_download_all = QPushButton("📁 Download Results")
+        btn_download_layout = QHBoxLayout()
+        btn_download_layout.addStretch()
+        btn_download_layout.addWidget(self.btn_download_all)
+        btn_download_layout.addStretch()
+        right_column.addLayout(btn_download_layout)
 
 
         ### === MONTAR T===
@@ -548,9 +444,6 @@ class IRCorrectionApp(QMainWindow):
         self.slider_tif.valueChanged.connect(self.update_superpose)
 
         # === CONEXIONES PARA TODOS LOS BOTONES Y SLIDERS ===
-
-        # Botón editar tau
-        self.btn_edit_tau.clicked.connect(self.toggle_tau_edit)
 
         # Botones RGB
         self.btn_insert_rgb.clicked.connect(self.load_rgb_image)
@@ -578,11 +471,7 @@ class IRCorrectionApp(QMainWindow):
         self.btn_rotate_model.clicked.connect(self.rotate_model_image)
         self.btn_apply_corr.clicked.connect(self.apply_correction)
         self.btn_add_model.clicked.connect(self.load_correction_model)
-        # self.btn_download_all.clicked.connect(self.save_results)
-        self.btn_lock.clicked.connect(self.lock_config)
-        self.btn_unlock.clicked.connect(self.unlock_config)
-        self.btn_clear_tif.clicked.connect(self.clear_tif_and_results)
-
+        self.btn_download_all.clicked.connect(self.download_all_images)
 
 ###
 
@@ -593,31 +482,24 @@ class IRCorrectionApp(QMainWindow):
 #"-------------------------------------RGB---------------------------------------------"
 
     def load_rgb_image(self):
+        fname, _ = QFileDialog.getOpenFileName(
+            self, 'Open RGB image', '', 'Image files (*.jpg *.png *.bmp)'
+        )
+        if not fname:
+            return
 
-            if self.config_locked:
-                QMessageBox.warning(self, "Locked", "RGB is locked. Unlock to modify.")
-                return
+        image = cv2.imread(fname)
+        if image is None:
+            QMessageBox.warning(self, "Error", "Could not load image.")
+            return
 
-            fname, _ = QFileDialog.getOpenFileName(
-                self, 'Open RGB image', '', 'Image files (*.jpg *.png *.bmp)'
-            )
-            if not fname:
-                return
-
-            image = cv2.imread(fname)
-            if image is None:
-                QMessageBox.warning(self, "Error", "Could not load image.")
-                return
-
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            self.image_rgb_original = image_rgb.copy()
-            self.image_rgb = image_rgb.copy()
-            self.rgb_display_image = image_rgb.copy()  # ⚡ buffer para superposición
-
-            self.image_label_rgb.set_numpy_image(self.rgb_display_image)
-            self.update_emissivity_canvas()
-            self.start_corner_selection()
-
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        self.image_rgb_original = image_rgb.copy()
+        self.image_rgb = image_rgb.copy()
+        self.rgb_display_image = image_rgb.copy()  # ⚡️ Guardar SIEMPRE buffer display!
+        self.image_label_rgb.set_numpy_image(self.rgb_display_image)
+        self.update_emissivity_canvas()
+        self.start_corner_selection()
 
     def start_corner_selection(self):
         self.image_label_rgb.points.clear()
@@ -849,26 +731,6 @@ class IRCorrectionApp(QMainWindow):
             self.update_superpose()
 
 
-    ### Botones de tau
-    def toggle_tau_edit(self):
-        """Activa o desactiva la edición manual de tau."""
-        if self.tau_input.isEnabled():
-            # Bloquear edición
-            self.tau_input.setEnabled(False)
-            self.btn_edit_tau.setText("✎")
-            # Si el usuario lo deja vacío o inválido, volver a 0.89
-            try:
-                value = float(self.tau_input.text().replace(",", "."))
-                if not (0 < value <= 1):
-                    raise ValueError
-            except ValueError:
-                self.tau_input.setText("0.89")
-        else:
-            # Permitir edición
-            self.tau_input.setEnabled(True)
-            self.btn_edit_tau.setText("✔️")
-
-
 ###☺
 
 ### SUPERPONER
@@ -943,18 +805,13 @@ class IRCorrectionApp(QMainWindow):
         QMessageBox.information(self, "Select", "Click polygon points on the image.")
 
     def start_shape(self):
-
-            if self.config_locked:
-                QMessageBox.warning(self, "Locked", "Emissivity shapes are locked.")
-                return
-
-            self.image_label_rgb.points.clear()
-            self.image_label_rgb.mode = 'polygon'
-            self.image_label_rgb.expected_points = 9999
-            self.image_label_rgb.callback = None
-            self.editing_shape_index = None  
-            self.image_label_rgb.update_display()
-            QMessageBox.information(self, "Shape Mode", "Click to add points. Then click 'End Draw' to save the shape.")
+        self.image_label_rgb.points.clear()
+        self.image_label_rgb.mode = 'polygon'
+        self.image_label_rgb.expected_points = 9999
+        self.image_label_rgb.callback = None
+        self.editing_shape_index = None  
+        self.image_label_rgb.update_display()
+        QMessageBox.information(self, "Shape Mode", "Click to add points. Then click 'End Draw' to save the shape.")
 
     def finish_shape(self):
         points = self.image_label_rgb.points.copy()
@@ -1218,29 +1075,23 @@ class IRCorrectionApp(QMainWindow):
         print(f"Images saved in: {folder}")
 
     def load_correction_model(self):
+        fname, _ = QFileDialog.getOpenFileName(self, 'Open correction model image (.tif)', '', 'TIF files (*.tif)')
+        if not fname:
+            return
 
-            if self.config_locked:
-                QMessageBox.warning(self, "Locked", "Correction model is locked. Unlock to modify.")
-                return
+        image = imread(fname).astype(np.float32)
+        self.model_original = image.copy()
+        self.model_data = image.copy()
 
-            fname, _ = QFileDialog.getOpenFileName(self, 'Open correction model image (.tif)', '', 'TIF files (*.tif)')
-            if not fname:
-                return
+        # Normaliza y colorea para mostrar
+        norm = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        colored = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+        temp_rgb = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
 
-            image = imread(fname).astype(np.float32)
-            self.model_original = image.copy()
-            self.model_data = image.copy()
+        self.image_label_model.set_numpy_image(temp_rgb)
 
-            # Normaliza y colorea para mostrar
-            norm = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            colored = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
-            temp_rgb = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
-
-            self.image_label_model.set_numpy_image(temp_rgb)
-
-            # Selección inicial de esquinas
-            self.start_model_corner_selection()
-
+        # Selección de esquinas
+        self.start_model_corner_selection()
 
     def start_model_corner_selection(self):
         if self.model_data is None:
@@ -1267,29 +1118,6 @@ class IRCorrectionApp(QMainWindow):
         self.image_label_model.callback = on_model_corners_selected
         self.image_label_model.update_display()
         QMessageBox.information(self, "Select", "Click 4 corners on the correction model.")
-
-
-    def _on_params_changed(self):
-        """
-        Recalcula la corrección en cuanto cambie tau/epsilon/temperatura,
-        pero solo si tenemos los datos cargados y la matriz de emisividad se puede construir.
-        Sin popups: silencioso si falta algo.
-        """
-        try:
-            if self.image_data is None or self.model_data is None:
-                return
-            # intenta construir emisividad; si no se puede, sal sin molestar
-            em = self.build_emissivity_matrix(silent=True)
-            if em is None:
-                return
-            # intenta leer parámetros
-            _ = float(self.temp_input.text().replace(",", "."))
-            _ = float(self.tau_input.text().replace(",", "."))
-        except Exception:
-            return  # valores aún no válidos
-
-        # si todo ok, recalcula
-        self.apply_correction()
 
     def apply_correction(self):
         from radiation_correction import correction_image, final_image
@@ -1320,36 +1148,13 @@ class IRCorrectionApp(QMainWindow):
         # Calcular corrección por reflexión
         correction_T, _ = correction_image(temperature, self.model_data, tau, emissivity_matrix)
 
-        # === Mostrar mapa de reflexión R ===
-        R_vmin, R_vmax = float(np.nanmin(correction_T)), float(np.nanmax(correction_T))
-
-        figR, axR = plt.subplots(figsize=(4, 4))
-        imR = axR.imshow(correction_T, cmap="hot")
-        cbarR = plt.colorbar(imR, ax=axR)
-        cbarR.set_label("Reflected Radiance (W/m²)")
-        axR.set_title(f"Reflection R (min={R_vmin:.2e}, max={R_vmax:.2e})")
-        plt.tight_layout()
-
-        bufR = BytesIO()
-        plt.savefig(bufR, format='png')
-        bufR.seek(0)
-        R_img = Image.open(bufR).convert("RGB")
-        R_np = np.array(R_img)
-        plt.close(figR)
-
-        hR, wR, chR = R_np.shape
-        qimgR = QImage(R_np.data, wR, hR, chR * wR, QImage.Format_RGB888)
-        self.image_label_reflection.setPixmap(QPixmap.fromImage(qimgR).scaled(
-            self.image_label_reflection.size(), Qt.KeepAspectRatio))
-
-
         # Calcular temperatura corregida real
         true_temp, true_temp_disc = final_image(
             temperature, self.image_data, correction_T, emissivity_matrix, tau, T_str
         )
 
         # Imagen continua
-        self.colored_temp = create_image_with_colorbar(true_temp)
+        self.colored_temp = create_image_with_colorbar(true_temp, "Corrected Temperature (Continuous)", "Temperature (K)")
 
         h1, w1, ch1 = self.colored_temp.shape
         qimg1 = QImage(self.colored_temp.data, w1, h1, ch1 * w1, QImage.Format_RGB888)
@@ -1357,7 +1162,7 @@ class IRCorrectionApp(QMainWindow):
         self.result_fig1.setPixmap(pixmap1)
 
         # Imagen discreta
-        self.colored_disc = create_image_with_colorbar(true_temp_disc)
+        self.colored_disc = create_image_with_colorbar(true_temp_disc, "Corrected Temperature (Discrete)", "Temperature (K)")
 
         h2, w2, ch2 = self.colored_disc.shape
         qimg2 = QImage(self.colored_disc.data, w2, h2, ch2 * w2, QImage.Format_RGB888)
@@ -1372,196 +1177,6 @@ class IRCorrectionApp(QMainWindow):
             return
 
         calibrated_matrix = calibrate_tif_temperature(self.image_data, matrix, m=20, n=20, is_kelvin=True)
-
-
-
-##
-
-## BLOCK CONFIGURATION
-
-##
-
-    def lock_config(self):
-        """Bloquea RGB, shapes y correction model."""
-        self.config_locked = True
-
-        # Bloquear RGB
-        self.btn_insert_rgb.setEnabled(False)
-        self.btn_select_rgb.setEnabled(False)
-        self.btn_apply_rgb.setEnabled(False)
-        self.btn_rotate_rgb.setEnabled(False)
-
-        # Bloquear shapes (emisividad)
-        self.start_button.setEnabled(False)
-        self.finish_button.setEnabled(False)
-        self.emiss_input.setEnabled(False)
-
-        # Bloquear correction model
-        self.btn_add_model.setEnabled(False)
-        self.btn_select_model.setEnabled(False)
-        self.btn_apply_model.setEnabled(False)
-        self.btn_rotate_model.setEnabled(False)
-
-        QMessageBox.information(self, "Locked", "Configuration locked.")
-
-    def unlock_config(self):
-        """Desbloquea RGB, shapes y correction model."""
-        self.config_locked = False
-
-        # Desbloquear RGB
-        self.btn_insert_rgb.setEnabled(True)
-        self.btn_select_rgb.setEnabled(True)
-        self.btn_apply_rgb.setEnabled(True)
-        self.btn_rotate_rgb.setEnabled(True)
-
-        # Desbloquear shapes
-        self.start_button.setEnabled(True)
-        self.finish_button.setEnabled(True)
-        self.emiss_input.setEnabled(True)
-
-        # Desbloquear correction model
-        self.btn_add_model.setEnabled(True)
-        self.btn_select_model.setEnabled(True)
-        self.btn_apply_model.setEnabled(True)
-        self.btn_rotate_model.setEnabled(True)
-
-        QMessageBox.information(self, "Unlocked", "Configuration unlocked.")
-
-    def clear_tif_and_results(self):
-        """Resetea solo el TIF y los resultados, sin tocar la config."""
-        # Borrar datos térmicos del TIF
-        self.image_data = None
-        self.tif_display_image = None
-        self.tif_corners = []
-
-        # Borrar figuras/labels
-        self.image_label_tif.clear()
-        self.superpose_label.clear()
-        self.image_label_reflection.clear()
-        self.result_fig1.clear()
-        self.result_fig2.clear()
-
-        # Variables internas
-        attrs = [
-            "captured_J", "captured_J_disc",
-            "correctionImage_eps_sigma_T4", "correctionImage_disc",
-            "R_map", "R_map_disc",
-            "corrected_sigma_T4", "corrected_sigma_T4_disc",
-            "true_temperature", "true_temperature_discrete"
-        ]
-
-        for at in attrs:
-            if hasattr(self, at):
-                setattr(self, at, None)
-
-        QMessageBox.information(self, "Cleared", "TIF and results cleared.")
-
-
-##
-
-## SAVE RESULTS ##
-
-##
-
-    def save_results(self):
-        """
-        Guarda TIFF + PNG de:
-        - radiancia continua
-        - radiancia discreta
-        - temperatura continua
-        - temperatura discreta
-        """
-
-        # Comprobaciones básicas
-        if self.image_data is None or self.model_data is None:
-            QMessageBox.warning(self, "Error", "Load both TIF and correction model first.")
-            return
-
-        try:
-            temperature = float(self.temp_input.text().replace(",", "."))
-            tau = float(self.tau_input.text().replace(",", "."))
-        except ValueError:
-            QMessageBox.warning(self, "Error", "Enter valid Temperature and Tau.")
-            return
-
-        emissivity_matrix = self.build_emissivity_matrix()
-        if emissivity_matrix is None:
-            QMessageBox.warning(self, "Error", "Emissivity matrix missing.")
-            return
-
-        # === 1) Asegurarse de que apply_correction() ya generó los mapas ===
-        if not hasattr(self, "captured_J"):
-            QMessageBox.warning(self, "Error", "You must apply correction before saving.")
-            return
-
-        # === 2) Crear carpeta del RUN ===
-        #    Ejemplo: outputs/T293/
-        run_dir = make_run_dir(
-            temperature=temperature,
-            tau=tau,
-            power=self.power_w,
-            run_tag=self.run_tag
-        )
-
-        # === 3) Guardar cada uno de los 4 mapas
-        #    usando SOLO lo que ya calculaste en apply_correction()
-
-        # --- CAPTURED ---
-        save_all_outputs(
-            out_dir=run_dir,
-            name_prefix="captured",
-            rad_cont=self.captured_J,
-            temp_cont=self.captured_T,
-            rad_disc=self.captured_J_disc,
-            temp_disc=self.captured_T_disc
-        )
-
-        # --- CORRECTION IMAGE (εσT⁴ ideal) ---
-        save_all_outputs(
-            out_dir=run_dir,
-            name_prefix="correctionImage",
-            rad_cont=self.correctionImage_eps_sigma_T4,
-            temp_cont=self.correction_temp_cont,
-            rad_disc=self.correctionImage_disc,
-            temp_disc=self.correction_temp_disc
-        )
-
-        # --- REFLECTION R ---
-        save_all_outputs(
-            out_dir=run_dir,
-            name_prefix="R_map",
-            rad_cont=self.R_map,
-            temp_cont=self.R_temp_cont,
-            rad_disc=self.R_map_disc,
-            temp_disc=self.R_temp_disc
-        )
-
-        # --- CORRECTED ---
-        save_all_outputs(
-            out_dir=run_dir,
-            name_prefix="corrected",
-            rad_cont=self.corrected_sigma_T4,
-            temp_cont=self.true_temperature,
-            rad_disc=self.corrected_sigma_T4_disc,
-            temp_disc=self.true_temperature_discrete
-        )
-
-        # === 4) Guardamos metadatos ===
-        save_metadata(
-            out_dir=run_dir,
-            temperature=temperature,
-            tau=tau,
-            emissivity_matrix=emissivity_matrix,
-            rgb_path=self.image_path
-        )
-
-        # === 5) CSV de estadísticas ===
-        save_maps_stats_csv(run_dir)
-
-        QMessageBox.information(
-            self, "Saved",
-            f"Results saved in:\n{run_dir}"
-        )
 
 
 if __name__ == "__main__":
